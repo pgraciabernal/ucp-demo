@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping Assistant</title>
+    <link rel="stylesheet" href="/css/chat.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛍️ Shopping Assistant</h1>
+            <p class="subtitle">Powered by Unified Commerce Protocol</p>
+            <button id="settings-btn" class="settings-btn" title="Settings">⚙️</button>
+        </div>
+
+        <!-- Discovery/Settings Modal -->
+        <div id="discovery-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>🔍 UCP Business Discovery</h2>
+                    <button class="modal-close" onclick="chatClient.closeDiscoveryModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="discovery-section">
+                        <h3>Discovered Businesses</h3>
+                        <button id="scan-network-btn" class="btn-primary">🔍 Scan Network</button>
+                        <div id="discovered-businesses" class="discovered-businesses">
+                            <p class="text-muted">Click "Scan Network" to discover UCP businesses on your local network</p>
+                        </div>
+                    </div>
+                    <div class="divider">OR</div>
+                    <div class="manual-config-section">
+                        <h3>Manual Configuration</h3>
+                        <label for="manual-url">Business URL:</label>
+                        <input type="text" id="manual-url" class="form-input" placeholder="http://localhost:8080" />
+                        <button id="connect-manual-btn" class="btn-secondary">Connect</button>
+                    </div>
+                    <div class="current-connection">
+                        <h4>Current Connection:</h4>
+                        <p id="current-connection-info">Not connected</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Product Catalog Sidebar (Hidden by default) -->
+            <div class="sidebar hidden" id="sidebar">
+                <div class="sidebar-header">
+                    <h2>Product Catalog</h2>
+                    <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Show catalog">
+                        ▶
+                    </button>
+                </div>
+                <div id="product-list" class="product-list">
+                    <div class="loading">Loading products...</div>
+                </div>
+            </div>
+
+            <!-- Toggle button when sidebar is hidden (Visible by default) -->
+            <button id="show-sidebar" class="show-sidebar-btn" style="display: flex;" title="Show catalog">
+                ▶ Show Catalog
+            </button>
+
+            <!-- Chat Interface -->
+            <div class="chat-container">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="message bot-message">
+                        <div class="message-avatar">🤖</div>
+                        <div class="message-content">
+                            <p>Hello! I'm your Adidas shopping assistant. I can help you:</p>
+                            <ul>
+                                <li>Browse our product catalog (say "show products" or click ▶ Show Catalog)</li>
+                                <li>Add items to your cart</li>
+                                <li>Remove items or empty cart</li>
+                                <li>Complete checkout</li>
+                                <li>Check order status</li>
+                            </ul>
+                            <p>Try saying: "Show me t-shirts" or "Show me shoes"</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="cart-summary" id="cart-summary" style="display: none;">
+                    <h3>🛒 Shopping Cart</h3>
+                    <div id="cart-items"></div>
+                    <div class="cart-total">
+                        <strong>Total: <span id="cart-total">$0.00</span></strong>
+                    </div>
+
+                    <!-- Billing Address Form -->
+                    <div class="billing-address-form">
+                        <h4>Billing Address</h4>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="first-name">First Name *</label>
+                                <input type="text" id="first-name" class="form-input" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="last-name">Last Name *</label>
+                                <input type="text" id="last-name" class="form-input" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="address-line1">Address *</label>
+                            <input type="text" id="address-line1" class="form-input" placeholder="Street address" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="address-line2">Extended Address (Optional)</label>
+                            <input type="text" id="address-line2" class="form-input" placeholder="Apt, suite, unit, etc.">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="city">City *</label>
+                                <input type="text" id="city" class="form-input" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="region">State/Region <span id="region-required" style="display:none;">*</span></label>
+                                <input type="text" id="region" class="form-input" placeholder="e.g., CA, TX, ON">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="postal-code">Postal Code *</label>
+                                <input type="text" id="postal-code" class="form-input" placeholder="e.g., 94103, SW1A 1AA" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="country">Country *</label>
+                                <select id="country" class="form-input" required>
+                                    <option value="">Select Country</option>
+                                    <option value="US">United States</option>
+                                    <option value="GB">United Kingdom</option>
+                                    <option value="ES">Spain</option>
+                                    <option value="FR">France</option>
+                                    <option value="DE">Germany</option>
+                                    <option value="IT">Italy</option>
+                                    <option value="CA">Canada</option>
+                                    <option value="MX">Mexico</option>
+                                    <option value="BR">Brazil</option>
+                                    <option value="AU">Australia</option>
+                                    <option value="JP">Japan</option>
+                                    <option value="CN">China</option>
+                                    <option value="IN">India</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="email">Email *</label>
+                            <input type="email" id="email" class="form-input" placeholder="your@email.com" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="phone">Phone Number</label>
+                            <input type="tel" id="phone" class="form-input" placeholder="+1 (555) 123-4567">
+                        </div>
+                    </div>
+
+                    <div class="payment-method-selector">
+                        <label for="payment-method">Payment Method:</label>
+                        <select id="payment-method" class="payment-method-select">
+                            <option value="VISA">💳 Visa (Success)</option>
+                            <option value="AMEX">💳 American Express (Success)</option>
+                            <option value="MASTERCARD">💳 Mastercard (Will Fail)</option>
+                        </select>
+                    </div>
+                    <button id="checkout-btn" class="checkout-btn">Checkout</button>
+                </div>
+
+                <div class="chat-input-container">
+                    <input
+                        type="text"
+                        id="user-input"
+                        class="chat-input"
+                        placeholder="Type your message here..."
+                        autocomplete="off"
+                    >
+                    <button id="send-btn" class="send-btn">Send</button>
+                </div>
+            </div>
+
+            <!-- UCP Flow Visualizer (Right Side) -->
+            <div class="ucp-flow-panel" id="ucp-flow-panel">
+                <div class="ucp-flow-header">
+                    <h3>🔄 UCP Protocol Flow</h3>
+                    <button id="toggle-ucp-flow" class="toggle-ucp-btn" title="Hide UCP Flow">
+                        ◀
+                    </button>
+                </div>
+                <div class="ucp-flow-content" id="ucp-flow-content">
+                    <div class="ucp-flow-empty">
+                        <p>🎯 Protocol flow will appear here</p>
+                        <p>Start shopping to see UCP objects in action!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/chat.js"></script>
+</body>
+</html>

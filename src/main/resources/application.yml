@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: ucp-poc
+
+server:
+  port: 8080
+
+# UCP Configuration
+ucp:
+  # UCP protocol version
+  version: "2026-04-08"
+
+  business:
+    name: "UCP Demo Store"
+    description: "A proof of concept store for Unified Commerce Protocol"
+    base-url: "http://localhost:8080"
+
+  # Protocol Configuration
+  protocol:
+    # Protocol mode: REST, A2A, or BOTH
+    # REST: Traditional REST API endpoints only
+    # A2A: Agent-to-Agent messaging only
+    # BOTH: Both protocols enabled (agents can choose)
+    mode: BOTH
+
+    # A2A Configuration
+    a2a:
+      enabled: true
+      websocket-enabled: true
+      http-enabled: true
+      max-message-size: 1048576  # 1MB
+      message-ttl: 300  # 5 minutes
+
+  # Cart configuration
+  cart:
+    expiry-minutes: 60
+
+  # Payment configuration (mock)
+  payment:
+    mock:
+      enabled: true
+
+  # Local network discovery (mDNS/Bonjour)
+  discovery:
+    enabled: true
+
+  # Schema validation
+  validation:
+    enabled: false  # Disabled temporarily for debugging
+    # Enable management endpoints (stats, cache control, manual validation)
+    management:
+      enabled: true
+    # Fail on validation errors (false = log warning and allow)
+    strict: false
+
+# Logging
+logging:
+  level:
+    com.ucp.poc: INFO
+    com.ucp.poc.controller: DEBUG
+    com.ucp.poc.service: INFO
