@@ -206,13 +206,11 @@ Configuration is in `src/main/resources/application.yml`:
 - **Official UCP Website**: https://ucp.dev
 - **UCP Specification**: https://ucp.dev/latest/specification/
 - **UCP GitHub**: https://github.com/Universal-Commerce-Protocol/ucp
-- **Our UCP Reference**: [docs/UCP-REFERENCE.md](docs/UCP-REFERENCE.md)
 
 ### Additional Resources
 - [Google Merchant UCP Docs](https://developers.google.com/merchant/ucp)
 - [UCP Java Implementation](https://www.ucomprotocol.dev/index.html)
 - [Spring AI A2A](https://github.com/spring-ai-community/spring-ai-a2a)
-- [A2A Implementation Spec](docs/A2A-SPECIFICATION.md) - Complete A2A protocol guide
 
 ## License
 
