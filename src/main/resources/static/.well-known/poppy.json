@@ -1,0 +1,38 @@
+{
+  "$schema": "https://personalagentprotocol.org",
+  "protocol_version": "0.1",
+  "organization": {
+    "name": "Adidas UCP Demo Store",
+    "website": "http://localhost:8080",
+    "logo_url": "http://localhost:8080/images/logo.png"
+  },
+  "authentication": {
+    "issuer": "http://localhost:8080/auth",
+    "authorization_endpoint": "http://localhost:8080/auth/authorize",
+    "token_endpoint": "http://localhost:8080/auth/token",
+    "supported_grant_types": ["authorization_code"],
+    "scopes": [
+      {
+        "name": "poppy:read",
+        "description": "Allows the agent to read the store's products and order history."
+      },
+      {
+        "name": "poppy:write",
+        "description": "Allows the agent to create shopping carts and process the checkout."
+      }
+    ]
+  },
+  "channels": {
+    "openapi": [
+      {
+        "id": "ucp-api-v1",
+        "url": "http://localhost:8080/v3/api-docs",
+        "description": "Complete specification of UCP endpoints (Products, Checkout, Orders) in OpenAPI/Swagger format."
+      }
+    ],
+    "company_agent": {
+      "endpoint": "http://localhost:8080/api/protocol/info",
+      "description": "Trade agent gateway interface for direct communication."
+    }
+  }
+}
