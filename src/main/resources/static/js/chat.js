@@ -2556,10 +2556,127 @@ class UcpChatClient {
     }
 }
 
+// --- GLOBAL POPPY PROTOCOL AGENT STATE ---
+let poppyConfig = {
+    discovered: false,
+    endpoints: {
+        products: null,
+        checkout: null,
+        authAuthorize: null,
+        authToken: null
+    },
+    accessToken: null
+};
+// 1. DYNAMIC DISCOVERY LIFECYCLE
+async function discoverPoppyCapabilities() {
+    try {
+        const response = await fetch('/.well-known/poppy.json');
+        if (!response.ok) throw new Error("Failed to load manifest");
+        
+        const manifest = await response.json();
+        
+        // Extract endpoints natively from the poppy.json layout
+        poppyConfig.endpoints.products = "/ucp/products";
+        poppyConfig.endpoints.checkout = "/ucp/checkout";
+        poppyConfig.endpoints.authAuthorize = manifest.authentication.authorization_endpoint;
+        poppyConfig.endpoints.authToken = manifest.authentication.token_endpoint;
+        
+        poppyConfig.discovered = true;
+        console.log("Poppy Agent: System initialized in Guest mode.");
+    } catch (error) {
+        console.error("Poppy Agent Error: Fallback triggered.", error);
+        poppyConfig.endpoints.products = "/ucp/products";
+        poppyConfig.endpoints.checkout = "/ucp/checkout";
+    }
+}
+// 2. TRIGGER INTERACTIVE OAUTH CONTEXT
+function initiateOAuthLoginFlow() {
+    return new Promise((resolve, reject) => {
+        const modal = document.getElementById('poppy-oauth-modal');
+        if (!modal) return reject("Modal elements missing from DOM");
+
+        modal.style.display = 'flex'; // Display the UI consent interface
+
+        // Handle structural approval action
+        document.getElementById('poppy-auth-approve').onclick = async () => {
+            modal.style.display = 'none';
+            try {        
+                // Step A: Hit the real endpoint /auth/authorize to simulate approval and extract a code
+                const authUrl = `${poppyConfig.endpoints.authAuthorize || '/auth/authorize'}?response_type=code&client_id=personal-agent-frontend&redirect_uri=${encodeURIComponent(window.location.origin)}&scope=poppy:read%20poppy:write&state=xyz123`;
+                
+                const authResponse = await fetch(authUrl);
+                // The MockAuthController sends a RedirectView, parse the target URL query params
+                const redirectedUrl = new URL(authResponse.url);
+                const code = redirectedUrl.searchParams.get('code');
+
+                if (!code) throw new Error("OAuth authorization code was not returned by server");
+
+                // Step B: Exchange the mock authorization code for a Bearer JWT Token via POST
+                const params = new URLSearchParams();
+                params.append('grant_type', 'authorization_code');
+                params.append('code', code);
+                params.append('redirect_uri', window.location.origin);
+                params.append('client_id', 'personal-agent-frontend');
+
+                const tokenResponse = await fetch(poppyConfig.endpoints.authToken || '/auth/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: params
+                });
+
+                if (!tokenResponse.ok) throw new Error("Token exchange failed");
+
+                const tokenData = await tokenResponse.json();
+                poppyConfig.accessToken = tokenData.access_token;
+                console.log("Poppy Agent: Elevated scopes authorized and stored.");
+                resolve(true);
+
+            } catch (err) {
+                reject(err);
+            }
+        };
+
+        // Handle cancellation action
+        document.getElementById('poppy-auth-cancel').onclick = () => {
+            modal.style.display = 'none';
+            reject("User cancelled agent delegation request.");
+        };
+    });
+}
+// 3. SECURE CHECKOUT CONSUMPTION ROUTINE
+async function executeSecureCheckout(checkoutPayload) {
+    if (!poppyConfig.discovered) await discoverPoppyCapabilities();
+
+    // Secure Escalation: Prompt user for full agent authorization if token isn't present
+    if (!poppyConfig.accessToken) {
+        try {
+            console.log("Poppy Agent: Action requires 'poppy:write' scope. Launching login challenge...");
+            await initiateOAuthLoginFlow();
+        } catch (authError) {
+            return { error: "unauthorized_agent", message: authError };
+        }
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (poppyConfig.accessToken) {
+        headers['Authorization'] = `Bearer ${poppyConfig.accessToken}`;
+    }
+
+    const response = await fetch(poppyConfig.endpoints.checkout, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(checkoutPayload)
+    });
+
+    return await response.json();
+}
+
 // Initialize the chat client when the page loads
 let chatClient;
 document.addEventListener('DOMContentLoaded', () => {
     chatClient = new UcpChatClient();
+    // Automatically initialize discovery routines when DOM components register
+    discoverPoppyCapabilities();
 
     // Make region required for US, CA, AU
     const countrySelect = document.getElementById('country');

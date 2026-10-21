@@ -197,5 +197,40 @@
     </div>
 
     <script src="/js/chat.js"></script>
+
+    <!-- Poppy Protocol OAuth Consent Modal -->
+    <div id="poppy-oauth-modal" class="poppy-modal-overlay" style="display: none;">
+        <div class="poppy-modal-card">
+            <div class="poppy-modal-header">
+                <img src="/images/logo.png" alt="Store Logo" onerror="this.src='https://placehold.co'"/>
+                <h3>Authorize Personal Agent</h3>
+            </div>
+            <div class="poppy-modal-body">
+                <p><strong>Adidas UCP Demo Store</strong> is requesting permission for your Personal Agent to act on your behalf.</p>
+                <div class="poppy-scopes-list">
+                    <div class="scope-item">
+                        <span class="scope-icon">👁️</span>
+                        <div>
+                            <strong>poppy:read</strong>
+                            <p>Allows the agent to read products and order history.</p>
+                        </div>
+                    </div>
+                    <div class="scope-item">
+                        <span class="scope-icon">🛒</span>
+                        <div>
+                            <strong>poppy:write</strong>
+                            <p>Allows the agent to manage carts and process checkouts.</p>
+                        </div>
+                    </div>
+                </div>
+                <p class="poppy-redirect-notice">You will be redirected back to the shopping assistant after confirmation.</p>
+            </div>
+            <div class="poppy-modal-footer">
+                <button id="poppy-auth-cancel" class="btn-poppy-secondary">Deny</button>
+                <button id="poppy-auth-approve" class="btn-poppy-primary">Authorize Agent</button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
