@@ -35,15 +35,7 @@ public class AgentCardController {
         agentCard.put("description", "A business agent supporting UCP protocols for commerce operations");
         agentCard.put("version", ucpVersion);
 
-        // Protocol list
-        List<String> protocols = new ArrayList<>();
-        if (protocolConfig.isRestEnabled()) {
-            protocols.add("rest");
-        }
-        if (protocolConfig.isA2aEnabled()) {
-            protocols.add("a2a");
-        }
-        agentCard.put("protocol", protocols.size() == 1 ? protocols.get(0) : protocols);
+        agentCard.put("protocol", "rest");
 
         // Protocol endpoints
         Map<String, Object> endpoints = new HashMap<>();
@@ -51,28 +43,21 @@ public class AgentCardController {
             endpoints.put("rest", "http://localhost:8080/ucp");
             endpoints.put("ucp_discovery", "http://localhost:8080/.well-known/ucp");
         }
-        if (protocolConfig.isA2aEnabled()) {
-            Map<String, Object> a2aEndpoints = new HashMap<>();
-            if (protocolConfig.getA2a().isHttpEnabled()) {
-                a2aEndpoints.put("http", "http://localhost:8080/a2a/message");
-            }
-            if (protocolConfig.getA2a().isWebsocketEnabled()) {
-                a2aEndpoints.put("websocket", "ws://localhost:8080/a2a/ws");
-            }
-            a2aEndpoints.put("capabilities", "http://localhost:8080/a2a/capabilities");
-            endpoints.put("a2a", a2aEndpoints);
-        }
         agentCard.put("endpoints", endpoints);
 
         // Capabilities
         Map<String, Object> capabilities = new HashMap<>();
         capabilities.put("products", Map.of(
                 "description", "Product catalog browsing and search",
-                "endpoint", "/ucp/products"
+                "endpoint", "/ucp/catalog/search"
+        ));
+        capabilities.put("carts", Map.of(
+                "description", "Multi-item shopping carts",
+                "endpoint", "/carts"
         ));
         capabilities.put("checkout", Map.of(
                 "description", "Multi-item cart checkout with payment processing",
-                "endpoint", "/ucp/checkout"
+                "endpoint", "/checkout-sessions"
         ));
         capabilities.put("orders", Map.of(
                 "description", "Order management and tracking",

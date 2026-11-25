@@ -5,7 +5,7 @@ Get up and running with the Unified Commerce Protocol proof of concept in under 
 ## 🎯 What You'll Get
 
 A fully functional e-commerce demo with:
-- ✅ UCP-compliant REST API (plus A2A messaging)
+- ✅ UCP-compliant REST API (JSON)
 - ✅ Interactive chat-based shopping UI
 - ✅ 6 pre-loaded Adidas products
 - ✅ Multi-item shopping cart
@@ -443,4 +443,4 @@ You now have a fully functional UCP-compliant e-commerce POC running locally.
 - See [POPPY.md](POPPY.md) for authorization flows
 - Browse the [UCP Specification](https://ucp.dev/latest/specification/)
 
-**Protocol Mode**: The POC runs in **BOTH** mode by default (`ucp.protocol.mode` in `application.yml`): REST and A2A (`/a2a/message`, `/a2a/ws`) are both enabled. The chat UI uses REST whenever REST is enabled.
+**Protocol Mode**: The POC uses **REST** with JSON payloads only (`ucp.protocol.mode: REST` in `application.yml`). Both the chat UI and external agents call the same REST endpoints.

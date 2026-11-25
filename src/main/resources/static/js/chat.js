@@ -4,8 +4,8 @@ class UcpChatClient {
     constructor() {
         this.apiBase = localStorage.getItem('ucpBaseUrl') || '';
         this.products = [];
-        this.cart = [];  // Client-side cart (REST mode or A2A fallback)
-        this.serverCartId = null;  // Server cart ID (A2A mode)
+        this.cart = [];  // Client-side cart
+        this.serverCartId = null;  // Server cart ID (POST /carts)
         this.customerId = 'customer-' + Math.random().toString(36).substr(2, 9);
         this.protocolInfo = null;
         this.discoveredBusinesses = [];
@@ -47,79 +47,7 @@ class UcpChatClient {
         return this.extractPrice(product).toFixed(2);
     }
 
-    /**
-     * Determines if we should use A2A protocol for operations
-     * Returns true only if A2A is enabled AND REST is disabled
-     */
-    shouldUseA2A() {
-        if (!this.protocolInfo) {
-            console.warn('Protocol info not loaded, defaulting to REST');
-            return false;
-        }
 
-        const useA2A = this.protocolInfo.a2aEnabled && !this.protocolInfo.restEnabled;
-        console.log(`Protocol routing: ${useA2A ? 'A2A' : 'REST'} (mode: ${this.protocolInfo.mode}, a2aEnabled: ${this.protocolInfo.a2aEnabled}, restEnabled: ${this.protocolInfo.restEnabled})`);
-        return useA2A;
-    }
-
-    /**
-     * Ensures we have a server-side cart in A2A mode
-     * Creates one if it doesn't exist
-     */
-    async ensureServerCart() {
-        if (!this.shouldUseA2A()) {
-            return null;  // Not needed in REST mode
-        }
-
-        if (this.serverCartId) {
-            // Verify cart still exists
-            try {
-                const getCartRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.get',
-                    params: { cartId: this.serverCartId },
-                    id: 'verify-cart-' + Date.now()
-                };
-
-                const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(getCartRequest)
-                });
-
-                const rpcResponse = await response.json();
-                if (!rpcResponse.error) {
-                    return this.serverCartId;  // Cart exists
-                }
-            } catch (error) {
-                console.warn('Server cart expired or invalid, creating new one');
-            }
-        }
-
-        // Create new server cart
-        console.log('Creating server-side cart for A2A mode');
-        const createCartRequest = {
-            jsonrpc: '2.0',
-            method: 'cart.create',
-            params: { customerId: this.customerId },
-            id: 'create-cart-' + Date.now()
-        };
-
-        const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(createCartRequest)
-        });
-
-        const rpcResponse = await response.json();
-        if (rpcResponse.error) {
-            throw new Error('Failed to create server cart: ' + rpcResponse.error.message);
-        }
-
-        this.serverCartId = rpcResponse.result.cartId;
-        console.log('Server cart created:', this.serverCartId);
-        return this.serverCartId;
-    }
 
     async init() {
         // Show current connection
@@ -150,7 +78,6 @@ class UcpChatClient {
             console.log('Protocol info loaded:', this.protocolInfo);
             console.log('Active protocol mode:', this.protocolInfo.mode);
             console.log('REST enabled:', this.protocolInfo.restEnabled);
-            console.log('A2A enabled:', this.protocolInfo.a2aEnabled);
 
             this.updateProtocolDisplay();
         } catch (error) {
@@ -160,8 +87,7 @@ class UcpChatClient {
             this.protocolInfo = {
                 mode: 'REST',
                 description: 'Fallback to REST mode (config unavailable)',
-                restEnabled: true,
-                a2aEnabled: false
+                restEnabled: true
             };
 
             console.warn('Using fallback protocol config:', this.protocolInfo);
@@ -419,7 +345,7 @@ class UcpChatClient {
 
         // Protocol badge color
         const protocolBadgeClass = 'protocol-rest'; // Always UCP/REST now
-        const protocolIcon = protocol === 'A2A' ? '🤖' : '📡';
+        const protocolIcon = '📡';
 
         flowItem.innerHTML = `
             <div class="ucp-flow-title">
@@ -483,58 +409,26 @@ class UcpChatClient {
                 throw new Error('Protocol configuration not available');
             }
 
-            // Use appropriate protocol based on configuration
-            if (this.shouldUseA2A()) {
-                // Use A2A endpoint
-                protocol = 'A2A';
-                console.log('Loading products using A2A protocol');
+            // Use REST endpoint - UCP standard /ucp/catalog/search
+            protocol = 'REST';
+            console.log('Loading products using REST protocol (UCP catalog.search)');
 
-                const rpcRequest = {
-                    jsonrpc: '2.0',
-                    method: 'product.list',
-                    params: {},
-                    id: 'load-products-' + Date.now()
-                };
+            this.logUcpFlow('request', 'GET /ucp/catalog/search', {
+                method: 'GET',
+                endpoint: '/ucp/catalog/search',
+                description: 'Search product catalog (empty query = all products)'
+            }, 'REST');
 
-                this.logUcpFlow('request', 'POST /a2a/rpc (product.list)', rpcRequest, 'A2A');
+            const response = await fetch(`${this.apiBase}/ucp/catalog/search`);
+            const ucpResponse = await response.json();
 
-                const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(rpcRequest)
-                });
+            // Extract products from UCP search response
+            products = ucpResponse.products || [];
+            console.log('UCP Response:', ucpResponse);
+            console.log('Products extracted:', products.length);
 
-                const rpcResponse = await response.json();
-
-                if (rpcResponse.error) {
-                    throw new Error(rpcResponse.error.message);
-                }
-
-                products = rpcResponse.result.products;
-            } else {
-                // Use REST endpoint - UCP standard /ucp/catalog/search
-                protocol = 'REST';
-                console.log('Loading products using REST protocol (UCP catalog.search)');
-
-                this.logUcpFlow('request', 'GET /ucp/catalog/search', {
-                    method: 'GET',
-                    endpoint: '/ucp/catalog/search',
-                    description: 'Search product catalog (empty query = all products)'
-                }, 'REST');
-
-                const response = await fetch(`${this.apiBase}/ucp/catalog/search`);
-                const ucpResponse = await response.json();
-
-                // Extract products from UCP search response
-                products = ucpResponse.products || [];
-                console.log('UCP Response:', ucpResponse);
-                console.log('Products extracted:', products.length);
-
-                // Log full UCP response
-                this.logUcpFlow('response', 'Product Catalog', ucpResponse, protocol);
-            }
+            // Log full UCP response
+            this.logUcpFlow('response', 'Product Catalog', ucpResponse, protocol);
 
             this.products = products;
 
@@ -745,40 +639,6 @@ class UcpChatClient {
         return query.length > 1 ? query : null;
     }
 
-    /**
-     * Search products using A2A protocol
-     */
-    async searchProductsA2A(query) {
-        console.log('Searching products using A2A protocol:', query);
-
-        const rpcRequest = {
-            jsonrpc: '2.0',
-            method: 'product.search',
-            params: {
-                query: query,
-                limit: 100
-            },
-            id: 'search-products-' + Date.now()
-        };
-
-        this.logUcpFlow('request', 'A2A: product.search', rpcRequest, 'A2A');
-
-        const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(rpcRequest)
-        });
-
-        const rpcResponse = await response.json();
-
-        if (rpcResponse.error) {
-            throw new Error(rpcResponse.error.message);
-        }
-
-        this.logUcpFlow('response', 'Search Results', rpcResponse.result, 'A2A');
-
-        return rpcResponse.result.products || [];
-    }
 
     /**
      * Search products using UCP catalog search endpoint (REST mode)
@@ -853,18 +713,14 @@ class UcpChatClient {
         let productsToShow = this.products;
         let messagePrefix = 'Here are all our available products.';
 
-        // If we have a search query, use server-side search (UCP or A2A)
+        // If we have a search query, use server-side search (UCP)
         if (filterMessage) {
             try {
                 const searchQuery = this.extractSearchQuery(filterMessage);
                 console.log('Extracted search query:', searchQuery, 'from message:', filterMessage);
                 if (searchQuery) {
-                    if (this.shouldUseA2A()) {
-                        productsToShow = await this.searchProductsA2A(searchQuery);
-                    } else {
-                        // Use UCP catalog search endpoint
-                        productsToShow = await this.searchProductsREST(searchQuery);
-                    }
+                    // Use UCP catalog search endpoint
+                    productsToShow = await this.searchProductsREST(searchQuery);
                     messagePrefix = `Found ${productsToShow.length} product(s) matching your search.`;
                 } else {
                     // Fallback to client-side filter
@@ -927,13 +783,8 @@ class UcpChatClient {
     }
 
     async addToCart(product) {
-        if (this.shouldUseA2A()) {
-            // A2A mode: Use server-side cart
-            await this.addToCartA2A(product);
-        } else {
-            // REST mode: Use UCP cart endpoints
-            await this.addToCartREST(product);
-        }
+        // REST mode: Use UCP cart endpoints
+        await this.addToCartREST(product);
     }
 
     async addToCartREST(product) {
@@ -1053,80 +904,10 @@ class UcpChatClient {
         }
     }
 
-    async addToCartA2A(product) {
-        try {
-            console.log('Adding to cart using A2A protocol');
-
-            // Ensure we have a server cart
-            const cartId = await this.ensureServerCart();
-
-            // Check if item already in cart (client-side tracking)
-            const existingItem = this.cart.find(item => item.productId === product.id);
-            const currentQuantity = existingItem ? existingItem.quantity : 0;
-
-            // Add or update item on server
-            const method = existingItem ? 'cart.update' : 'cart.add';
-            const rpcRequest = {
-                jsonrpc: '2.0',
-                method: method,
-                params: {
-                    cartId: cartId,
-                    productId: product.id,
-                    quantity: currentQuantity + 1
-                },
-                id: 'add-to-cart-' + Date.now()
-            };
-
-            this.logUcpFlow('request', `A2A: ${method}`, rpcRequest, 'A2A');
-
-            const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(rpcRequest)
-            });
-
-            const rpcResponse = await response.json();
-
-            if (rpcResponse.error) {
-                throw new Error(rpcResponse.error.message);
-            }
-
-            this.logUcpFlow('response', 'Cart Updated', rpcResponse.result, 'A2A');
-
-            // Update client-side cart for display
-            const unitPrice = this.extractPrice(product);
-
-            if (existingItem) {
-                existingItem.quantity++;
-                existingItem.totalPrice = existingItem.unitPrice * existingItem.quantity;
-            } else {
-                this.cart.push({
-                    productId: product.id,
-                    productName: product.name,
-                    quantity: 1,
-                    unitPrice: unitPrice,
-                    totalPrice: unitPrice,
-                    currency: product.price?.currency || 'USD'
-                });
-            }
-
-            this.updateCartDisplay();
-            this.addMessage(`Added ${product.name} to your cart! ($${this.formatPrice(product)})`, 'bot');
-
-        } catch (error) {
-            console.error('Error adding to cart via A2A:', error);
-            this.addMessage(`Failed to add ${product.name} to cart: ${error.message}`, 'bot');
-        }
-    }
 
     async removeFromCart(productId) {
-        if (this.shouldUseA2A()) {
-            // A2A mode: Use server-side cart
-            return await this.removeFromCartA2A(productId);
-        } else {
-            // REST mode: Use UCP cart endpoints
-            return await this.removeFromCartREST(productId);
-        }
+        // REST mode: Use UCP cart endpoints
+        return await this.removeFromCartREST(productId);
     }
 
     async removeFromCartREST(productId) {
@@ -1241,84 +1022,6 @@ class UcpChatClient {
         }
     }
 
-    async removeFromCartA2A(productId) {
-        try {
-            console.log('Removing from cart using A2A protocol');
-
-            const itemIndex = this.cart.findIndex(item => item.productId === productId);
-            if (itemIndex === -1) {
-                return null;
-            }
-
-            const item = this.cart[itemIndex];
-            const newQuantity = item.quantity - 1;
-
-            if (!this.serverCartId) {
-                console.warn('No server cart ID, falling back to client-side');
-                return this.removeFromCartClientSide(productId);
-            }
-
-            // Update or remove on server
-            let rpcRequest;
-            if (newQuantity > 0) {
-                // Update quantity
-                rpcRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.update',
-                    params: {
-                        cartId: this.serverCartId,
-                        productId: productId,
-                        quantity: newQuantity
-                    },
-                    id: 'update-cart-' + Date.now()
-                };
-            } else {
-                // Remove item
-                rpcRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.remove',
-                    params: {
-                        cartId: this.serverCartId,
-                        productId: productId
-                    },
-                    id: 'remove-from-cart-' + Date.now()
-                };
-            }
-
-            this.logUcpFlow('request', `A2A: ${rpcRequest.method}`, rpcRequest, 'A2A');
-
-            const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(rpcRequest)
-            });
-
-            const rpcResponse = await response.json();
-
-            if (rpcResponse.error) {
-                throw new Error(rpcResponse.error.message);
-            }
-
-            this.logUcpFlow('response', 'Cart Updated', rpcResponse.result, 'A2A');
-
-            // Update client-side cart for display
-            const removedItem = { ...item };
-            if (newQuantity > 0) {
-                item.quantity = newQuantity;
-                item.totalPrice = item.unitPrice * newQuantity;
-            } else {
-                this.cart.splice(itemIndex, 1);
-            }
-
-            this.updateCartDisplay();
-            return removedItem;
-
-        } catch (error) {
-            console.error('Error removing from cart via A2A:', error);
-            this.addMessage(`Failed to remove item from cart: ${error.message}`, 'bot');
-            return null;
-        }
-    }
 
     async emptyCart() {
         if (this.cart.length === 0) {
@@ -1326,13 +1029,8 @@ class UcpChatClient {
             return;
         }
 
-        if (this.shouldUseA2A()) {
-            // A2A mode: Use server-side cart
-            await this.emptyCartA2A();
-        } else {
-            // REST mode: Use UCP cart endpoints
-            await this.emptyCartREST();
-        }
+        // REST mode: Use UCP cart endpoints
+        await this.emptyCartREST();
     }
 
     async emptyCartREST() {
@@ -1368,50 +1066,6 @@ class UcpChatClient {
         }
     }
 
-    async emptyCartA2A() {
-        try {
-            console.log('Emptying cart using A2A protocol');
-
-            const itemCount = this.cart.length;
-
-            if (this.serverCartId) {
-                const rpcRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.clear',
-                    params: {
-                        cartId: this.serverCartId
-                    },
-                    id: 'clear-cart-' + Date.now()
-                };
-
-                this.logUcpFlow('request', 'A2A: cart.clear', rpcRequest, 'A2A');
-
-                const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(rpcRequest)
-                });
-
-                const rpcResponse = await response.json();
-
-                if (rpcResponse.error) {
-                    throw new Error(rpcResponse.error.message);
-                }
-
-                this.logUcpFlow('response', 'Cart Cleared', rpcResponse.result, 'A2A');
-            }
-
-            // Clear client-side cart
-            this.cart = [];
-            this.serverCartId = null;  // Reset server cart ID
-            this.updateCartDisplay();
-            this.addMessage(`🗑️ Cart cleared! Removed ${itemCount} item${itemCount > 1 ? 's' : ''} from your cart.`, 'bot');
-
-        } catch (error) {
-            console.error('Error clearing cart via A2A:', error);
-            this.addMessage(`Failed to clear cart: ${error.message}`, 'bot');
-        }
-    }
 
     handleRemoveFromCart(message) {
         if (this.cart.length === 0) {
@@ -1738,19 +1392,12 @@ class UcpChatClient {
             let result;
             let protocol;
 
-            if (this.shouldUseA2A()) {
-                // Use A2A protocol
-                protocol = 'A2A';
-                console.log('Checkout using A2A protocol');
-                result = await this.checkoutViaA2A(selectedPaymentMethod, billingAddress);
-            } else {
-                // Use REST protocol
-                protocol = 'REST';
-                console.log('Checkout using REST protocol');
-                result = await this.checkoutViaREST(selectedPaymentMethod, billingAddress);
-            }
+            // Use REST protocol
+            protocol = 'REST';
+            console.log('Checkout using REST protocol');
+            result = await this.checkoutViaREST(selectedPaymentMethod, billingAddress);
 
-            // Result already logged by checkoutViaREST or checkoutViaA2A
+            // Result already logged by checkoutViaREST
 
             if (result.status === 'success') {
                 this.showOrderConfirmation(result);
@@ -1930,122 +1577,6 @@ class UcpChatClient {
         }
     }
 
-    async checkoutViaA2A(selectedPaymentMethod, billingAddress) {
-        let cartId;
-        let response;
-        let rpcResponse;
-
-        // Use existing server cart if available
-        if (this.serverCartId) {
-            console.log('Using existing server cart:', this.serverCartId);
-            cartId = this.serverCartId;
-        } else {
-            console.log('Creating new cart for checkout (fallback)');
-            // 1. Create cart
-            const createCartRequest = {
-                jsonrpc: '2.0',
-                method: 'cart.create',
-                params: {
-                    customerId: this.customerId
-                },
-                id: 'create-cart-' + Date.now()
-            };
-
-            this.logUcpFlow('request', 'A2A: cart.create', createCartRequest, 'A2A');
-
-            response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(createCartRequest)
-            });
-            rpcResponse = await response.json();
-
-            if (rpcResponse.error) throw new Error(rpcResponse.error.message);
-
-            cartId = rpcResponse.result.cartId;
-            this.logUcpFlow('response', 'Cart Created', rpcResponse.result, 'A2A');
-
-            // 2. Add all items to cart (only if creating new cart)
-            for (const item of this.cart) {
-                const addItemRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.add',
-                    params: {
-                        cartId: cartId,
-                        productId: item.productId,
-                        quantity: item.quantity
-                    },
-                    id: 'add-item-' + Date.now()
-                };
-
-                this.logUcpFlow('request', 'A2A: cart.add', addItemRequest, 'A2A');
-
-                response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(addItemRequest)
-                });
-                rpcResponse = await response.json();
-
-                if (rpcResponse.error) throw new Error(rpcResponse.error.message);
-
-                this.logUcpFlow('response', 'Item Added', rpcResponse.result, 'A2A');
-            }
-        }
-
-        // 3. Process checkout
-        const checkoutRequest = {
-            jsonrpc: '2.0',
-            method: 'checkout.process',
-            params: {
-                cartId: cartId,
-                paymentMethod: selectedPaymentMethod,
-                billingAddress: billingAddress,
-                shippingMethod: 'standard'
-            },
-            id: 'checkout-' + Date.now()
-        };
-
-        this.logUcpFlow('request', 'A2A: checkout.process', checkoutRequest, 'A2A');
-
-        response = await fetch(`${this.apiBase}/a2a/rpc`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(checkoutRequest)
-        });
-        rpcResponse = await response.json();
-
-        // Handle JSON-RPC error response
-        if (rpcResponse.error) {
-            this.logUcpFlow('error', 'A2A Checkout Error', rpcResponse, 'A2A');
-
-            // Convert JSON-RPC error to REST-compatible format
-            return {
-                status: 'error',
-                message: rpcResponse.error.message,
-                errorCode: rpcResponse.error.code,
-                errorData: rpcResponse.error.data
-            };
-        }
-
-        // Clear server cart ID after successful checkout
-        this.serverCartId = null;
-
-        this.logUcpFlow('response', 'A2A Checkout Success', rpcResponse.result, 'A2A');
-
-        // Convert A2A response to REST format
-        return {
-            status: 'success',
-            orderId: rpcResponse.result.orderId,
-            paymentId: rpcResponse.result.paymentId,
-            total: rpcResponse.result.total,
-            currency: rpcResponse.result.currency,
-            transactionId: rpcResponse.result.transactionId,
-            orderStatus: rpcResponse.result.status,
-            paymentStatus: 'CAPTURED',
-            message: 'Checkout completed successfully'
-        };
-    }
 
 
     async payNow(product) {
@@ -2188,134 +1719,30 @@ class UcpChatClient {
                 throw new Error('Protocol configuration not available');
             }
 
-            if (this.shouldUseA2A()) {
-                // Use A2A protocol
-                protocol = 'A2A';
-                console.log('Pay Now using A2A protocol');
+            // Use UCP Checkout Session protocol (REST)
+            protocol = 'UCP';
+            console.log('Pay Now using UCP Checkout Session');
 
-                // 1. Create cart
-                const createCartRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.create',
-                    params: {
-                        customerId: this.customerId
-                    },
-                    id: 'paynow-cart-' + Date.now()
-                };
+            // Create a temporary cart with just this product
+            const tempCart = [{
+                productId: product.id,
+                productName: product.name,
+                quantity: 1,
+                unitPrice: this.extractPrice(product),
+                totalPrice: this.extractPrice(product),
+                currency: product.price?.currency || 'USD'
+            }];
 
-                this.logUcpFlow('request', 'A2A: cart.create (Pay Now)', createCartRequest, 'A2A');
+            // Temporarily store current cart and use temp cart
+            const originalCart = this.cart;
+            this.cart = tempCart;
 
-                let response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(createCartRequest)
-                });
-                let rpcResponse = await response.json();
-
-                if (rpcResponse.error) {
-                    console.error('Cart creation failed:', rpcResponse.error);
-                    throw new Error('Cart creation failed: ' + rpcResponse.error.message);
-                }
-
-                const cartId = rpcResponse.result.cartId;
-                console.log('Pay Now: Created cart:', cartId);
-                this.logUcpFlow('response', 'Cart Created', rpcResponse.result, 'A2A');
-
-                // 2. Add item to cart
-                const addItemRequest = {
-                    jsonrpc: '2.0',
-                    method: 'cart.add',
-                    params: {
-                        cartId: cartId,
-                        productId: product.id,
-                        quantity: 1
-                    },
-                    id: 'paynow-add-' + Date.now()
-                };
-
-                this.logUcpFlow('request', 'A2A: cart.add (Pay Now)', addItemRequest, 'A2A');
-
-                response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(addItemRequest)
-                });
-                rpcResponse = await response.json();
-
-                if (rpcResponse.error) {
-                    console.error('Add item failed:', rpcResponse.error);
-                    throw new Error('Add item failed: ' + rpcResponse.error.message);
-                }
-
-                console.log('Pay Now: Added item to cart:', cartId);
-                this.logUcpFlow('response', 'Item Added', rpcResponse.result, 'A2A');
-
-                // 3. Process checkout
-                const checkoutRequest = {
-                    jsonrpc: '2.0',
-                    method: 'checkout.process',
-                    params: {
-                        cartId: cartId,
-                        paymentMethod: paymentMethod,
-                        billingAddress: billingAddress,
-                        shippingMethod: 'standard'
-                    },
-                    id: 'paynow-checkout-' + Date.now()
-                };
-
-                console.log('Pay Now: Processing checkout with cart:', cartId);
-                this.logUcpFlow('request', 'A2A: checkout.process (Pay Now)', checkoutRequest, 'A2A');
-
-                response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(checkoutRequest)
-                });
-                rpcResponse = await response.json();
-
-                if (rpcResponse.error) {
-                    console.error('Checkout failed:', rpcResponse.error);
-                    throw new Error('Checkout failed: ' + rpcResponse.error.message);
-                }
-
-                // Convert A2A response to common format
-                result = {
-                    status: 'success',
-                    orderId: rpcResponse.result.orderId,
-                    paymentId: rpcResponse.result.paymentId,
-                    total: rpcResponse.result.total,
-                    currency: rpcResponse.result.currency,
-                    transactionId: rpcResponse.result.transactionId,
-                    orderStatus: rpcResponse.result.status,
-                    paymentStatus: 'CAPTURED',
-                    message: 'Checkout completed successfully'
-                };
-            } else {
-                // Use UCP Checkout Session protocol (REST)
-                protocol = 'UCP';
-                console.log('Pay Now using UCP Checkout Session');
-
-                // Create a temporary cart with just this product
-                const tempCart = [{
-                    productId: product.id,
-                    productName: product.name,
-                    quantity: 1,
-                    unitPrice: this.extractPrice(product),
-                    totalPrice: this.extractPrice(product),
-                    currency: product.price?.currency || 'USD'
-                }];
-
-                // Temporarily store current cart and use temp cart
-                const originalCart = this.cart;
-                this.cart = tempCart;
-
-                try {
-                    // Use the same checkout flow as normal checkout
-                    result = await this.checkoutViaREST(paymentMethod, billingAddress);
-                } finally {
-                    // Restore original cart
-                    this.cart = originalCart;
-                }
+            try {
+                // Use the same checkout flow as normal checkout
+                result = await this.checkoutViaREST(paymentMethod, billingAddress);
+            } finally {
+                // Restore original cart
+                this.cart = originalCart;
             }
 
             // Log response
@@ -2377,85 +1804,53 @@ class UcpChatClient {
                 throw new Error('Protocol configuration not available');
             }
 
-            if (this.shouldUseA2A()) {
-                // Use A2A endpoint
-                protocol = 'A2A';
-                console.log('Checking order status using A2A protocol');
+            // Use REST endpoint
+            protocol = 'REST';
+            console.log('Checking order status using REST protocol');
 
-                const rpcRequest = {
-                    jsonrpc: '2.0',
-                    method: 'order.get',
-                    params: {
-                        orderId: orderId
-                    },
-                    id: 'order-status-' + Date.now()
+            this.logUcpFlow('request', 'GET /ucp/orders/' + orderId, {
+                method: 'GET',
+                endpoint: '/ucp/orders/' + orderId
+            }, 'REST');
+
+            await ensurePoppyAccessToken('poppy:read');
+            const response = await fetch(`${this.apiBase}/ucp/orders/${orderId}`, {
+                headers: poppyAuthHeaders()
+            });
+
+            if (response.status === 401 || response.status === 403) {
+                const authError = await response.json();
+                this.logUcpFlow('error', `Poppy authorization failed (${response.status})`, authError, protocol);
+                this.addMessage(`❌ Not authorized: ${authError.error_description || authError.error}`, 'bot');
+                return;
+            }
+
+            if (response.ok) {
+                const ucpResponse = await response.json();
+                this.logUcpFlow('response', 'Order Details', ucpResponse, protocol);
+
+                // Extract order from UCP envelope
+                order = {
+                    orderId: ucpResponse.id,
+                    orderNumber: ucpResponse.order_number,
+                    status: ucpResponse.status,
+                    subtotal: ((ucpResponse.totals?.find(t => t.type === 'subtotal')?.amount || 0) / 100).toFixed(2),
+                    tax: ((ucpResponse.totals?.find(t => t.type === 'tax')?.amount || 0) / 100).toFixed(2),
+                    total: ((ucpResponse.totals?.find(t => t.type === 'total')?.amount || 0) / 100).toFixed(2),
+                    items: (ucpResponse.line_items || []).map(item => ({
+                        productName: item.name || item.description || 'Unknown',
+                        quantity: item.quantity || 0,
+                        totalPrice: ((item.total_price || 0) / 100).toFixed(2)
+                    })),
+                    payment: ucpResponse.payment ? {
+                        id: ucpResponse.payment.id,
+                        status: ucpResponse.payment.status,
+                        transactionId: ucpResponse.payment.transaction_id
+                    } : null
                 };
-
-                this.logUcpFlow('request', 'A2A: order.get', rpcRequest, 'A2A');
-
-                const response = await fetch(`${this.apiBase}/a2a/rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(rpcRequest)
-                });
-
-                const rpcResponse = await response.json();
-
-                if (rpcResponse.error) {
-                    this.addMessage('Order not found. Please check your order ID.', 'bot');
-                    return;
-                }
-
-                order = rpcResponse.result.order;
             } else {
-                // Use REST endpoint
-                protocol = 'REST';
-                console.log('Checking order status using REST protocol');
-
-                this.logUcpFlow('request', 'GET /ucp/orders/' + orderId, {
-                    method: 'GET',
-                    endpoint: '/ucp/orders/' + orderId
-                }, 'REST');
-
-                await ensurePoppyAccessToken('poppy:read');
-                const response = await fetch(`${this.apiBase}/ucp/orders/${orderId}`, {
-                    headers: poppyAuthHeaders()
-                });
-
-                if (response.status === 401 || response.status === 403) {
-                    const authError = await response.json();
-                    this.logUcpFlow('error', `Poppy authorization failed (${response.status})`, authError, protocol);
-                    this.addMessage(`❌ Not authorized: ${authError.error_description || authError.error}`, 'bot');
-                    return;
-                }
-
-                if (response.ok) {
-                    const ucpResponse = await response.json();
-                    this.logUcpFlow('response', 'Order Details', ucpResponse, protocol);
-
-                    // Extract order from UCP envelope
-                    order = {
-                        orderId: ucpResponse.id,
-                        orderNumber: ucpResponse.order_number,
-                        status: ucpResponse.status,
-                        subtotal: ((ucpResponse.totals?.find(t => t.type === 'subtotal')?.amount || 0) / 100).toFixed(2),
-                        tax: ((ucpResponse.totals?.find(t => t.type === 'tax')?.amount || 0) / 100).toFixed(2),
-                        total: ((ucpResponse.totals?.find(t => t.type === 'total')?.amount || 0) / 100).toFixed(2),
-                        items: (ucpResponse.line_items || []).map(item => ({
-                            productName: item.name || item.description || 'Unknown',
-                            quantity: item.quantity || 0,
-                            totalPrice: ((item.total_price || 0) / 100).toFixed(2)
-                        })),
-                        payment: ucpResponse.payment ? {
-                            id: ucpResponse.payment.id,
-                            status: ucpResponse.payment.status,
-                            transactionId: ucpResponse.payment.transaction_id
-                        } : null
-                    };
-                } else {
-                    this.addMessage('Order not found. Please check your order ID.', 'bot');
-                    return;
-                }
+                this.addMessage('Order not found. Please check your order ID.', 'bot');
+                return;
             }
 
             this.showOrderDetails(order);

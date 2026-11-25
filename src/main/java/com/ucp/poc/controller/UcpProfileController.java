@@ -42,23 +42,7 @@ public class UcpProfileController {
             protocols.put("rest", Map.of(
                 "enabled", true,
                 "baseUrl", "/ucp",
-                "documentation", "/api-docs"
-            ));
-        }
-        if (protocolConfig.isA2aEnabled()) {
-            protocols.put("a2a", Map.of(
-                "enabled", true,
-                "transports", Map.of(
-                    "http", Map.of(
-                        "enabled", protocolConfig.getA2a().isHttpEnabled(),
-                        "endpoint", "/a2a/message"
-                    ),
-                    "websocket", Map.of(
-                        "enabled", protocolConfig.getA2a().isWebsocketEnabled(),
-                        "endpoint", "/a2a/ws"
-                    )
-                ),
-                "capabilities", "/a2a/capabilities"
+                "documentation", "/v3/api-docs"
             ));
         }
         profile.put("protocols", protocols);

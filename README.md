@@ -23,7 +23,7 @@ This POC implements a mock e-commerce store with UCP protocol support, enabling 
 - **Spring Boot 3.2** with Java 21
 - **UCP Spring Boot Starter** for protocol support
 - **In-memory storage** for POC simplicity (concurrent hash maps)
-- **REST API** following UCP conventions
+- **REST API** with JSON payloads following UCP conventions (the only supported protocol)
 - **Poppy authorization layer**: mock OAuth server (`/auth/*`) plus a Spring MVC interceptor that checks Bearer tokens and scopes on protected paths
 
 ## Getting Started
@@ -166,13 +166,6 @@ The complete request carries `buyer`, `payment.instruments` and `fulfillment.met
 - `GET /ucp/payments/order/{orderId}` - Get payment by order
 - `POST /ucp/payments/{paymentId}/refund` - Refund a payment
 
-### A2A (Agent-to-Agent)
-
-- `POST /a2a/message` - Send an A2A message (synchronous HTTP)
-- `WS /a2a/ws` - STOMP WebSocket endpoint. Send to `/app/a2a/message`, receive on `/topic/a2a/responses`
-- `GET /a2a/capabilities` - List supported A2A operations
-- `GET /a2a/health` - A2A health check
-
 ### Schema Validation (admin)
 
 Available when `ucp.validation.management.enabled: true`:
@@ -265,8 +258,6 @@ src/main/
 │   │   ├── UcpCheckoutSessionController.java  # /checkout-sessions
 │   │   ├── OrderController.java               # /ucp/orders
 │   │   ├── PaymentController.java             # /ucp/payments
-│   │   ├── A2aController.java                 # /a2a/message, /a2a/capabilities, /a2a/health
-│   │   ├── A2aWebSocketController.java        # STOMP /app/a2a/message
 │   │   ├── PoppyDiscoveryController.java  # GET /.well-known/poppy.json
 │   │   └── MockAuthController.java        # Mock OAuth: /auth/authorize, /auth/token
 │   ├── service/            # Business logic
@@ -314,7 +305,6 @@ Configuration is in `src/main/resources/application.yml`:
 ### Additional Resources
 - [Google Merchant UCP Docs](https://developers.google.com/merchant/ucp)
 - [UCP Java Implementation](https://www.ucomprotocol.dev/index.html)
-- [Spring AI A2A](https://github.com/spring-ai-community/spring-ai-a2a)
 
 ## License
 

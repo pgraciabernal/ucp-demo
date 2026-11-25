@@ -341,7 +341,6 @@ In the UI: *"❌ Checkout cancelled: Unknown account: someone@example.com"*.
 - **Coarse scope mapping**: the required scope comes from the HTTP method (`GET` → read, anything else → write), not from each endpoint.
 - **Hardcoded URLs**: `poppy.json` uses `http://localhost:8080`, and `logo_url` points to `/images/logo.png`, which doesn't exist yet.
 - **Client token storage**: in memory only, so it's lost on page reload.
-- **A2A channel**: the A2A checkout path in the UI (`/a2a/rpc`) is not covered by Poppy authorization.
 - **No automated tests** for the Poppy endpoints or the scope check yet.
 
 ---
@@ -352,4 +351,3 @@ In the UI: *"❌ Checkout cancelled: Unknown account: someone@example.com"*.
 - Validate tokens with Spring Security's resource-server support, and declare scopes per endpoint (e.g. `hasAuthority('SCOPE_poppy:write')`).
 - Use PKCE and a real browser redirect (not a `fetch`-followed redirect) for browser-based agents.
 - Generate `poppy.json` from configuration so URLs match the environment where it's deployed.
-- Propagate the user's token through the A2A router so A2A and REST share the same authorization model.

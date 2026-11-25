@@ -4,7 +4,7 @@
 
 UCP POC is a Spring Boot 3.2 application demonstrating the Unified Commerce Protocol (UCP) for AI-enabled commerce operations. It implements a mock e-commerce store with full UCP protocol support, enabling AI agents to discover and interact with commerce capabilities.
 
-It also implements the **Personal Agent Protocol (Poppy)**. A personal agent acting for an end user discovers the store through a manifest, obtains a user-delegated OAuth 2.0 token with limited scopes, and presents it to call protected commerce operations (see [Component 11](#11-personal-agent-authorization-poppy) and [POPPY.md](POPPY.md)).
+It also implements the **Personal Agent Protocol (Poppy)**. A personal agent acting for an end user discovers the store through a manifest, obtains a user-delegated OAuth 2.0 token with limited scopes, and presents it to call protected commerce operations (see [Component 10](#10-personal-agent-authorization-poppy) and [POPPY.md](POPPY.md)).
 
 ## Tech Stack
 
@@ -15,7 +15,6 @@ It also implements the **Personal Agent Protocol (Poppy)**. A personal agent act
 
 ### Key Libraries
 - **Spring Boot Web**: REST API framework
-- **Spring Boot WebSocket**: WebSocket support for A2A protocol
 - **Spring Boot DevTools**: Hot reload for development
 - **Lombok**: Reduces boilerplate code
 - **JmDNS**: 3.5.9 - Local network service discovery (mDNS/Bonjour)
@@ -29,86 +28,20 @@ It also implements the **Personal Agent Protocol (Poppy)**. A personal agent act
 ## Architecture Components
 
 ### 0. Protocol Layer
-**Purpose**: Multi-protocol support for agent communication (REST and A2A)
+**Purpose**: Expose every commerce operation as a REST endpoint with JSON request and response bodies
 
 **Components**:
-- `ProtocolConfiguration`: Multi-protocol configuration management
-- `ProtocolCondition`: Conditional bean loading based on protocol mode
-- `A2aMessageRouter`: Routes A2A messages to internal REST handlers
-- `A2aController`: HTTP POST endpoint for synchronous A2A messaging
-- `A2aWebSocketController`: WebSocket handler for asynchronous A2A messaging
-- `WebSocketConfig`: STOMP over WebSocket configuration
+- `ProtocolConfiguration`: Holds `ucp.protocol.mode`; `REST` is the only supported value
+- `ProtocolCondition.RestEnabled`: Enables the cart and checkout controllers when the mode is `REST`
+- `ProtocolInfoController`: `GET /api/protocol/info` reports the active mode to the UI
 
-**Protocol Modes**:
-- `REST`: Traditional REST API endpoints only
-- `A2A`: Agent-to-Agent messaging only
-- `BOTH`: Both protocols enabled (default) - agents choose their preference
-
-**A2A Protocol Features**:
-- **Message Correlation**: Each message has unique `messageId`, responses include `correlationId`
-- **Structured Errors**: Consistent error format with retry hints (NO_RETRY, RETRY_WITH_BACKOFF, RETRY_IMMEDIATE, RETRY_AFTER_DELAY)
-- **Operation Registry**: 28+ operations mapped to REST equivalents
-- **Dual Transport**: HTTP POST for sync, WebSocket for async bidirectional communication
-- **Agent Identity**: Built-in sender/receiver tracking via `from`/`to` fields
-- **Internal Routing**: A2A messages route to existing REST handlers (no code duplication)
-
-**A2A DTOs**:
-- `A2aMessage`: Complete message structure with type (REQUEST/RESPONSE/ERROR/NOTIFICATION)
-- `A2aError`: Structured error responses with retry hints and status codes
-- `A2aOperationRegistry`: Central registry mapping operations to REST endpoints
-
-**Registered A2A Operations** (`A2aOperationRegistry`) and the REST path each one routes to:
-
-| Operation | Registered REST target | Served by a controller? |
-|-----------|------------------------|:-----------------------:|
-| `catalog.search` | `GET /ucp/catalog/search` | ✅ |
-| `catalog.lookup` | `GET /ucp/catalog/lookup` | ✅ |
-| `catalog.product.get` | `GET /ucp/products/{id}` | ❌ |
-| `catalog.products.list` | `GET /ucp/products` | ❌ |
-| `cart.add` / `cart.get` / `cart.update` / `cart.remove` / `cart.clear` | `/ucp/cart...` | ❌ (carts live at `/carts`) |
-| `checkout.session.create` / `.update` / `.complete` / `.get` | `/ucp/checkout/session...` | ❌ (sessions live at `/checkout-sessions`) |
-| `order.get` | `GET /ucp/orders/{id}` | ✅ 🔒 |
-| `order.list` | `GET /ucp/orders` | ❌ |
-| `payment.process` | `POST /ucp/payments` | ❌ |
-| `payment.get` | `GET /ucp/payments/{id}` | ✅ 🔒 |
-| `discovery.profile` | `GET /ucp/profile` | ✅ |
-| `discovery.capabilities` | `GET /.well-known/agent.json` | ✅ |
-
-> ⚠️ Operations marked ❌ point at legacy paths that no controller serves, so they fail with an error. Operations marked 🔒 hit Poppy-protected paths; the router doesn't forward a user token, so they currently get `401`. Fixing either needs a code change in `A2aOperationRegistry` / `A2aMessageRouter`.
-
-**Key A2A Endpoints**:
-- `POST /a2a/message` - Send A2A message (synchronous HTTP)
-- `WS /a2a/ws` - WebSocket connection (asynchronous, STOMP-based). Send to `/app/a2a/message`, responses on `/topic/a2a/responses`
-- `GET /a2a/capabilities` - List all supported operations
-- `GET /a2a/health` - A2A protocol health check
+Agents find the REST endpoints through `/.well-known/ucp`, `/.well-known/agent.json`, `/.well-known/poppy.json` and the OpenAPI document at `/v3/api-docs`. A2A messaging (HTTP and WebSocket) was removed because it never worked end to end.
 
 **Configuration**:
 ```yaml
 ucp:
   protocol:
-    mode: BOTH  # REST, A2A, or BOTH
-    a2a:
-      enabled: true
-      websocket-enabled: true
-      http-enabled: true
-      max-message-size: 1048576  # 1MB
-      message-ttl: 300  # 5 minutes
-```
-
-**Message Format Example**:
-```json
-{
-  "messageId": "uuid",
-  "type": "REQUEST",
-  "from": "agent-id",
-  "to": "ucp-demo-store",
-  "operation": "catalog.search",
-  "payload": {"q": "shoes", "limit": 5},
-  "metadata": {
-    "timestamp": "2026-06-16T10:30:00Z",
-    "protocolVersion": "2026-04-08"
-  }
-}
+    mode: REST
 ```
 
 ### 1. Discovery Layer
@@ -117,7 +50,7 @@ ucp:
 **Components**:
 - `UcpDiscoveryService`: Manages UCP profile and capability declarations
 - `UcpProfileService`: Generates dynamic UCP profile configuration
-- `AgentCardController`: Exposes `/.well-known/agent.json` (advertises REST + A2A endpoints)
+- `AgentCardController`: Exposes `/.well-known/agent.json` (advertises the REST endpoints)
 - `UcpProfileController`: Exposes `/ucp/profile` (multi-protocol aware)
 - `UcpWellKnownController`: Exposes `/.well-known/ucp`
 - `DiscoveryStatusController`: `GET /api/discovery/status` (mDNS status)
@@ -127,15 +60,15 @@ ucp:
 
 **Key Endpoints**:
 - `GET /.well-known/ucp` - Primary UCP discovery endpoint (standard)
-- `GET /.well-known/agent.json` - Agent card for capability discovery (includes REST and A2A endpoints)
+- `GET /.well-known/agent.json` - Agent card for capability discovery (REST endpoints)
 - `GET /ucp/profile` - Detailed UCP protocol configuration (shows active protocols)
-- `GET /api/protocol/info` - Current protocol mode (REST, A2A, or BOTH)
+- `GET /api/protocol/info` - Current protocol mode (REST)
 - `GET /.well-known/poppy.json` - Poppy manifest: organization, OAuth endpoints, scopes, and channels (OpenAPI at `/v3/api-docs`, company agent at `/api/protocol/info`)
 
 **Network Discovery**:
 - mDNS/Bonjour service registration for local network discovery
 - Service type: `_ucp-poc._tcp.local`
-- Advertises both REST and A2A endpoints in TXT records
+- Advertises the REST base path in TXT records
 - Configurable via `ucp.discovery.enabled` in application.yml
 
 ### 2. Product Catalog
@@ -158,11 +91,6 @@ ucp:
 **Key Endpoints**:
 - `GET /ucp/catalog/search` - UCP-compliant search. Query parameters: `q`, `category`, `min_price`, `max_price`, `limit` (default 20), `offset`, `sort_by` (`relevance`/`price`/`title`), `sort_order` (`asc`/`desc`)
 - `GET /ucp/catalog/lookup?id={productId}` - Single product with options and variants
-
-**A2A Operations**:
-- `catalog.search` - Routes to GET /ucp/catalog/search
-- `catalog.lookup` - Routes to GET /ucp/catalog/lookup
-- `catalog.product.get`, `catalog.products.list` - Registered against `/ucp/products...`, which is not served (see the Protocol Layer table)
 
 ### 3. Shopping Cart
 **Purpose**: Session-based multi-item cart management
@@ -311,11 +239,7 @@ ucp:
 ```yaml
 ucp:
   protocol:
-    mode: BOTH  # REST, A2A, or BOTH
-    a2a:
-      enabled: true
-      websocket-enabled: true
-      http-enabled: true
+    mode: REST
   cart:
     expiry-minutes: 60
   payment:
@@ -328,40 +252,7 @@ ucp:
     strict: false
 ```
 
-### 9. A2A Message Routing
-
-**Purpose**: Route A2A messages to internal REST handlers
-
-**Components**:
-- `A2aMessageRouter`: Central routing logic
-- `A2aOperationRegistry`: Operation-to-endpoint mapping
-- `RestTemplate`: Internal HTTP client for routing
-
-**Routing Flow**:
-1. Receive A2A message with operation name (e.g., "catalog.search")
-2. Look up operation in registry to get REST endpoint (e.g., "GET /ucp/catalog/search")
-3. Extract payload parameters and resolve path/query parameters
-4. Execute internal REST call via RestTemplate
-5. Convert REST response to A2A response message
-6. Return with correlation ID matching original request
-
-**Error Handling**:
-- Operation not found → OPERATION_NOT_FOUND error
-- Invalid payload → VALIDATION_ERROR error
-- Handler exception → HANDLER_ERROR error
-- All errors include retry hints and HTTP status code equivalents
-
-**Path Parameter Resolution**:
-- Operation payload fields map to path parameters
-- Example (`order.get`): `{"id": "order-123"}` → `/ucp/orders/order-123`
-
-**Known Gaps**: the router calls `http://localhost:8080` without an `Authorization` header, and several registry targets are not served (see the Protocol Layer table).
-
-**Query Parameter Handling**:
-- Payload fields not in path become query parameters for GET requests
-- Example: `{"q": "shoes", "limit": 5}` → `/ucp/catalog/search?q=shoes&limit=5`
-
-### 10. Web UI (Chat Client)
+### 9. Web UI (Chat Client)
 **Purpose**: User-facing shopping interface
 
 **Location**: `src/main/resources/static/`
@@ -390,7 +281,7 @@ ucp:
 
 **Poppy client** (`chat.js`): `discoverPoppyCapabilities()` reads the manifest on page load. `ensurePoppyAccessToken(scope)` opens the consent dialog when the current token lacks the required scope. `initiateOAuthLoginFlow()` runs the authorize/token exchange, and `poppyAuthHeaders()` adds the Bearer header to protected calls. The token and granted scopes are kept in memory (`poppyConfig`) for the page session.
 
-### 11. Personal Agent Authorization (Poppy)
+### 10. Personal Agent Authorization (Poppy)
 **Purpose**: Let a personal agent act on behalf of a user with explicit, scope-limited consent
 
 **Components**:
@@ -432,7 +323,6 @@ The account is identified by the OIDC `login_hint` parameter on `/auth/authorize
 
 **Limitations**:
 - Mock server: no passwords, opaque tokens, no expiry enforcement, refresh token unused, state lost on restart
-- The A2A channel (`/a2a/*`) and its internal `RestTemplate` routing do not propagate user tokens and are not covered by Poppy
 
 ## Data Flow
 
@@ -543,8 +433,8 @@ All data stored in concurrent hash maps for thread-safety:
 ## Security Considerations
 
 ### Current State (POC)
-- **Poppy authorization** on checkout sessions, orders and payments: Bearer tokens with `poppy:read`/`poppy:write` scopes, issued by a **mock** OAuth server (no passwords, opaque in-memory tokens). See [Component 11](#11-personal-agent-authorization-poppy)
-- Catalog, cart, discovery and A2A endpoints have no authentication (intentionally for demo)
+- **Poppy authorization** on checkout sessions, orders and payments: Bearer tokens with `poppy:read`/`poppy:write` scopes, issued by a **mock** OAuth server (no passwords, opaque in-memory tokens). See [Component 10](#10-personal-agent-authorization-poppy)
+- Catalog, cart and discovery endpoints have no authentication (intentionally for demo)
 - No HTTPS/TLS (local development only)
 - No rate limiting
 - No input sanitization beyond validation
@@ -553,7 +443,6 @@ All data stored in concurrent hash maps for thread-safety:
 - Replace `MockAuthController`/`PoppyTokenStore` with a real authorization server (Spring Authorization Server, Keycloak, Auth0) issuing signed JWTs with a `scope` claim
 - Replace `PoppySecurityInterceptor` with Spring Security resource-server validation and per-endpoint scope rules (e.g. `hasAuthority('SCOPE_poppy:write')`)
 - Use PKCE and real browser redirects for browser-based personal agents
-- Propagate the user's token through A2A routing so both protocols share the Poppy authorization model
 - Add HTTPS/TLS termination
 - Rate limiting per customer/session
 - Input sanitization and SQL injection prevention (if DB added)
@@ -590,8 +479,6 @@ All data stored in concurrent hash maps for thread-safety:
 ### Test Structure
 ```
 src/test/java/com/ucp/poc/
-├── controller/
-│   └── A2aControllerTest.java
 ├── service/
 │   ├── ProductServiceTest.java
 │   └── UcpSchemaValidatorTest.java
@@ -649,36 +536,9 @@ logging:
 - APM tools (New Relic, Datadog)
 - Business metrics tracking
 
-## Protocol Comparison: REST vs A2A
-
-| Aspect | REST | A2A |
-|--------|------|-----|
-| **Transport** | HTTP/HTTPS only | HTTP POST + WebSocket |
-| **Message Format** | Direct JSON payload | Wrapped in A2A envelope |
-| **Correlation** | None (stateless) | Built-in via messageId/correlationId |
-| **Error Format** | HTTP status + body | Structured error with retry hints |
-| **Agent Identity** | Via headers (optional) | Built-in via from/to fields |
-| **Async Support** | Limited (polling) | Native via WebSocket |
-| **Operation Discovery** | OpenAPI/docs | Dynamic via capabilities endpoint |
-| **Use Case** | Simple request-response | Complex agent orchestration |
-
-**When to Use REST**:
-- Browser-based clients
-- Simple stateless requests
-- Low message volume
-- Standard HTTP tooling
-
-**When to Use A2A**:
-- Agent-to-agent communication
-- Need message correlation
-- WebSocket for real-time updates
-- Complex error recovery with retry hints
-- Agent identity tracking
-
 ## Future Enhancements
 
 ### Protocol Support
-- ✅ A2A (Agent-to-Agent) protocol - **IMPLEMENTED**
 - ✅ Personal Agent Protocol (Poppy) discovery and scoped authorization - **IMPLEMENTED** (mock OAuth server)
 - MCP (Model Context Protocol) integration
 - GraphQL API for flexible queries
@@ -692,18 +552,15 @@ logging:
 - Multi-currency support
 - Real-time order tracking
 - Email notifications
-- A2A message persistence for replay/debugging
 - Agent registry and capability tracking
 
 ### Technical Improvements
 - Database persistence layer
 - Distributed session management
-- Production-grade authentication (REST is covered by mock Poppy authorization; A2A is not yet)
-- API rate limiting (per agent for A2A)
+- Production-grade authentication (REST is covered by mock Poppy authorization)
+- API rate limiting (per agent)
 - Webhook support for external integrations
 - Comprehensive API documentation (OpenAPI/Swagger)
-- A2A message tracing and metrics
-- WebSocket connection pooling
 
 ## References
 

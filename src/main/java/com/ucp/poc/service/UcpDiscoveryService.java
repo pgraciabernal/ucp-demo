@@ -86,9 +86,7 @@ public class UcpDiscoveryService {
             txtRecords.put("path", "/.well-known/ucp");
 
             // Add protocol-specific info
-            if ("A2A".equalsIgnoreCase(protocolMode)) {
-                txtRecords.put("a2a_endpoint", "/a2a/rpc");
-            } else if ("REST".equalsIgnoreCase(protocolMode)) {
+            if ("REST".equalsIgnoreCase(protocolMode)) {
                 txtRecords.put("rest_base", "/ucp");
             }
 

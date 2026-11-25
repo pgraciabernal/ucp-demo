@@ -17,19 +17,8 @@ ucp:
 
   # Protocol Configuration
   protocol:
-    # Protocol mode: REST, A2A, or BOTH
-    # REST: Traditional REST API endpoints only
-    # A2A: Agent-to-Agent messaging only
-    # BOTH: Both protocols enabled (agents can choose)
-    mode: BOTH
-
-    # A2A Configuration
-    a2a:
-      enabled: true
-      websocket-enabled: true
-      http-enabled: true
-      max-message-size: 1048576  # 1MB
-      message-ttl: 300  # 5 minutes
+    # Protocol mode: REST (JSON) is the only supported protocol
+    mode: REST
 
   # Cart configuration
   cart:

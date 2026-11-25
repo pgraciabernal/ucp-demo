@@ -68,12 +68,6 @@
             <version>1.4.0</version>
         </dependency>
 
-        <!-- WebSocket for A2A protocol support -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-websocket</artifactId>
-        </dependency>
-
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
