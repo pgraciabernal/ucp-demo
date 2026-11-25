@@ -15,8 +15,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(securityInterceptor)
                 // Apply protection for specific endpoints
-                .addPathPatterns("/ucp/checkout", "/ucp/orders/**", "/ucp/payments/**")
-                // Endpoints excluded
-                .excludePathPatterns("/ucp/products/**");
+                .addPathPatterns("/checkout-sessions/**", "/ucp/orders/**", "/ucp/payments/**");
     }
 }

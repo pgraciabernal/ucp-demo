@@ -1313,6 +1313,36 @@ body {
     color: #a6adc8;
 }
 
+.poppy-required-scope {
+    font-size: 0.85rem;
+    color: #f9e2af;
+    margin: 0 0 12px 0;
+}
+
+.poppy-login-label {
+    display: block;
+    font-size: 0.85rem;
+    color: #cdd6f4;
+    margin-bottom: 6px;
+}
+
+.poppy-login-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #45475a;
+    background-color: #181825;
+    color: #cdd6f4;
+    font-size: 0.9rem;
+}
+
+.poppy-login-hint {
+    font-size: 0.75rem;
+    color: #a6adc8;
+    margin: 6px 0 12px 0;
+}
+
 .poppy-redirect-notice {
     font-size: 0.75rem;
     color: #f38ba8;
