@@ -2170,6 +2170,15 @@ class UcpChatClient {
 
         this.addMessage(`Processing instant purchase for ${product.name} with ${paymentMethod}...`, 'bot');
 
+        // Pay Now creates a checkout session, which requires the 'poppy:write' scope
+        try {
+            await ensurePoppyAccessToken('poppy:write');
+        } catch (authError) {
+            console.error("Poppy Agent: Authorization failed.", authError);
+            this.addMessage(`❌ Purchase cancelled: ${authError.message}`, 'bot');
+            return;
+        }
+
         try {
             let result;
             let protocol;
