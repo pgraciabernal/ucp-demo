@@ -57,17 +57,28 @@ It also implements the **Personal Agent Protocol (Poppy)**. A personal agent act
 - `A2aError`: Structured error responses with retry hints and status codes
 - `A2aOperationRegistry`: Central registry mapping operations to REST endpoints
 
-**Supported A2A Operations**:
-- **Catalog**: catalog.search, catalog.product.get, catalog.products.list, catalog.lookup
-- **Cart**: cart.add, cart.get, cart.update, cart.remove, cart.clear
-- **Checkout**: checkout.session.create, checkout.session.update, checkout.session.complete, checkout.session.get
-- **Orders**: order.get, order.list
-- **Payments**: payment.process, payment.get
-- **Discovery**: discovery.profile, discovery.capabilities
+**Registered A2A Operations** (`A2aOperationRegistry`) and the REST path each one routes to:
+
+| Operation | Registered REST target | Served by a controller? |
+|-----------|------------------------|:-----------------------:|
+| `catalog.search` | `GET /ucp/catalog/search` | ✅ |
+| `catalog.lookup` | `GET /ucp/catalog/lookup` | ✅ |
+| `catalog.product.get` | `GET /ucp/products/{id}` | ❌ |
+| `catalog.products.list` | `GET /ucp/products` | ❌ |
+| `cart.add` / `cart.get` / `cart.update` / `cart.remove` / `cart.clear` | `/ucp/cart...` | ❌ (carts live at `/carts`) |
+| `checkout.session.create` / `.update` / `.complete` / `.get` | `/ucp/checkout/session...` | ❌ (sessions live at `/checkout-sessions`) |
+| `order.get` | `GET /ucp/orders/{id}` | ✅ 🔒 |
+| `order.list` | `GET /ucp/orders` | ❌ |
+| `payment.process` | `POST /ucp/payments` | ❌ |
+| `payment.get` | `GET /ucp/payments/{id}` | ✅ 🔒 |
+| `discovery.profile` | `GET /ucp/profile` | ✅ |
+| `discovery.capabilities` | `GET /.well-known/agent.json` | ✅ |
+
+> ⚠️ Operations marked ❌ point at legacy paths that no controller serves, so they fail with an error. Operations marked 🔒 hit Poppy-protected paths; the router doesn't forward a user token, so they currently get `401`. Fixing either needs a code change in `A2aOperationRegistry` / `A2aMessageRouter`.
 
 **Key A2A Endpoints**:
 - `POST /a2a/message` - Send A2A message (synchronous HTTP)
-- `WS /a2a/ws` - WebSocket connection (asynchronous, STOMP-based)
+- `WS /a2a/ws` - WebSocket connection (asynchronous, STOMP-based). Send to `/app/a2a/message`, responses on `/topic/a2a/responses`
 - `GET /a2a/capabilities` - List all supported operations
 - `GET /a2a/health` - A2A protocol health check
 
@@ -108,8 +119,10 @@ ucp:
 - `UcpProfileService`: Generates dynamic UCP profile configuration
 - `AgentCardController`: Exposes `/.well-known/agent.json` (advertises REST + A2A endpoints)
 - `UcpProfileController`: Exposes `/ucp/profile` (multi-protocol aware)
-- `DiscoveryStatusController`: Status endpoint for health checks
-- `DiscoveryHelperController`: Helper endpoints for debugging
+- `UcpWellKnownController`: Exposes `/.well-known/ucp`
+- `DiscoveryStatusController`: `GET /api/discovery/status` (mDNS status)
+- `DiscoveryHelperController`: `GET /api/discovery/scan`, `GET /api/discovery/clear-cache` (debugging)
+- `ProtocolInfoController`: `GET /api/protocol/info`
 - `PoppyDiscoveryController`: Exposes the Poppy manifest `/.well-known/poppy.json`
 
 **Key Endpoints**:
@@ -130,37 +143,32 @@ ucp:
 
 **Components**:
 - `ProductService`: Business logic for product management
-- `ProductController`: REST endpoints for product access
-- `CatalogSearchController`: UCP-compliant product search
+- `CatalogSearchController`: UCP-compliant product search and lookup (the only catalog REST controller)
 
 **Domain Models**:
 - `Product`: Core product entity with UCP-compliant fields
 - `UcpProduct`: DTO for UCP protocol responses
 
 **Features**:
-- Product listing and detail views
-- Category-based filtering
-- Search by name/description
+- Product listing (search with no query returns every product)
+- Category and price-range filtering
+- Search by name/description with sorting and pagination
 - 6 pre-loaded Adidas products (shoes, apparel, accessories)
 
 **Key Endpoints**:
-- `GET /ucp/products` - List all products
-- `GET /ucp/products/{productId}` - Product details
-- `GET /ucp/products/category/{category}` - Category filter
-- `GET /ucp/catalog/search` - UCP-compliant search
-- `GET /ucp/catalog/lookup` - Product lookup by ID
+- `GET /ucp/catalog/search` - UCP-compliant search. Query parameters: `q`, `category`, `min_price`, `max_price`, `limit` (default 20), `offset`, `sort_by` (`relevance`/`price`/`title`), `sort_order` (`asc`/`desc`)
+- `GET /ucp/catalog/lookup?id={productId}` - Single product with options and variants
 
 **A2A Operations**:
 - `catalog.search` - Routes to GET /ucp/catalog/search
-- `catalog.product.get` - Routes to GET /ucp/products/{id}
-- `catalog.products.list` - Routes to GET /ucp/products
 - `catalog.lookup` - Routes to GET /ucp/catalog/lookup
+- `catalog.product.get`, `catalog.products.list` - Registered against `/ucp/products...`, which is not served (see the Protocol Layer table)
 
 ### 3. Shopping Cart
 **Purpose**: Session-based multi-item cart management
 
 **Components**:
-- `CartController`: Cart operations (add, remove, view, clear)
+- `CartController`: Cart operations (create, update, cancel)
 - `CheckoutSessionService`: Session state management with TTL
 
 **Features**:
@@ -170,10 +178,9 @@ ucp:
 - Session-based isolation (no cross-session leakage)
 
 **Key Endpoints**:
-- `POST /ucp/cart/add` - Add item to cart
-- `DELETE /ucp/cart/remove` - Remove item from cart
-- `GET /ucp/cart` - View cart contents
-- `POST /ucp/cart/clear` - Clear cart
+- `POST /carts` - Create a cart from `line_items`
+- `PUT /carts/{cartId}` - Replace the cart's line items (add, remove, change quantity)
+- `POST /carts/{cartId}/cancel` - Cancel (clear) the cart
 
 ### 4. Checkout & Payment
 **Purpose**: UCP-compliant checkout flow with payment processing
@@ -184,18 +191,18 @@ ucp:
 - `PaymentService`: Mock payment processing with configurable outcomes
 - `TaxCalculationService`: Tax calculation based on shipping address
 
-**Checkout Flow**:
-1. **Session Creation**: `POST /ucp/checkout/session`
-   - Validates cart contents
+**Checkout Flow** (🔒 all steps require Poppy `poppy:write`):
+1. **Session Creation**: `POST /checkout-sessions`
+   - Validates line items, buyer and context
    - Calculates subtotal, tax, shipping, total
    - Creates checkout session with TTL
 
-2. **Session Update**: `POST /ucp/checkout/session/{sessionId}`
-   - Updates shipping/billing addresses
+2. **Session Update** (optional): `PUT /checkout-sessions/{id}`
+   - Updates buyer, addresses and line items
    - Recalculates tax based on destination
-   - Updates payment method
 
-3. **Session Completion**: `POST /ucp/checkout/session/{sessionId}/complete`
+3. **Session Completion**: `POST /checkout-sessions/{id}/complete`
+   - Carries `buyer`, `payment.instruments` and `fulfillment.methods`
    - Processes payment
    - Creates order
    - Generates payment record
@@ -211,11 +218,12 @@ ucp:
 - US state-specific rates supported
 - International support (configurable per country)
 
-**Key Endpoints**:
-- `POST /ucp/checkout/session` - Create checkout session
-- `POST /ucp/checkout/session/{sessionId}` - Update session
-- `POST /ucp/checkout/session/{sessionId}/complete` - Complete checkout
-- `GET /ucp/checkout/session/{sessionId}` - Get session details
+**Key Endpoints** (🔒 `GET` requires `poppy:read`, others `poppy:write`):
+- `POST /checkout-sessions` - Create checkout session
+- `GET /checkout-sessions/{id}` - Get session details
+- `PUT /checkout-sessions/{id}` - Update session
+- `POST /checkout-sessions/{id}/complete` - Complete checkout (response includes the created `order`)
+- `POST /checkout-sessions/{id}/cancel` - Cancel session
 
 ### 5. Order Management
 **Purpose**: Order tracking and history
@@ -284,10 +292,11 @@ ucp:
       enabled: true # Enable management endpoints
 ```
 
-**Key Endpoints**:
-- `GET /api/validation/stats` - Validation statistics
-- `POST /api/validation/cache/clear` - Clear schema cache
-- `POST /api/validation/validate` - Manual schema validation
+**Key Endpoints** (when `ucp.validation.management.enabled: true`):
+- `GET /admin/schema-validation/stats` - Schema cache statistics
+- `POST /admin/schema-validation/clear-cache` - Clear schema cache
+- `POST /admin/schema-validation/validate/{capabilityName}` - Validate a JSON body against a capability schema
+- `POST /admin/schema-validation/load-resource` - Load a schema from a classpath resource
 
 ### 8. Configuration Layer
 **Purpose**: Dynamic protocol and feature configuration
@@ -344,7 +353,9 @@ ucp:
 
 **Path Parameter Resolution**:
 - Operation payload fields map to path parameters
-- Example: `{"id": "prod-001"}` → `/ucp/products/prod-001`
+- Example (`order.get`): `{"id": "order-123"}` → `/ucp/orders/order-123`
+
+**Known Gaps**: the router calls `http://localhost:8080` without an `Authorization` header, and several registry targets are not served (see the Protocol Layer table).
 
 **Query Parameter Handling**:
 - Payload fields not in path become query parameters for GET requests
@@ -427,9 +438,9 @@ The account is identified by the OIDC `login_hint` parameter on `/auth/authorize
 
 ### Product Browsing Flow
 ```
-User → UI Chat Client → ProductController → ProductService → In-Memory Storage
-                                           ↓
-                                    UCP Response Format
+User → UI Chat Client → CatalogSearchController → ProductService → In-Memory Storage
+                                                 ↓
+                                          UCP Response Format
 ```
 
 ### Checkout Flow
@@ -520,8 +531,8 @@ All data stored in concurrent hash maps for thread-safety:
 - Schema validation against official UCP JSON schemas
 
 ### REST Conventions
-- Resource-based URLs (`/ucp/products`, `/ucp/orders`)
-- Proper HTTP methods (GET, POST, DELETE)
+- Resource-based URLs (`/carts`, `/checkout-sessions`, `/ucp/orders`)
+- Proper HTTP methods (GET, POST, PUT); state transitions use action sub-resources (`/complete`, `/cancel`)
 - Standard status codes (200, 201, 400, 404, 500)
 
 ### Error Handling
@@ -579,10 +590,12 @@ All data stored in concurrent hash maps for thread-safety:
 ### Test Structure
 ```
 src/test/java/com/ucp/poc/
+├── controller/
+│   └── A2aControllerTest.java
 ├── service/
 │   ├── ProductServiceTest.java
 │   └── UcpSchemaValidatorTest.java
-└── UcpPocApplicationTests.java
+└── UcpDemoApplicationTests.java
 ```
 
 ### Testing Recommendations

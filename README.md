@@ -88,6 +88,10 @@ Any other email is denied. The token is kept in memory for the page session, so 
 - `GET /ucp/profile` - UCP protocol configuration
 - `GET /api/protocol/info` - Current protocol mode (REST)
 - `GET /.well-known/poppy.json` - Personal Agent Protocol (Poppy) manifest: OAuth endpoints, scopes and channels
+- `GET /api/discovery/status` - mDNS/Bonjour discovery status
+- `GET /api/discovery/scan?timeout=5` - Scan the local network for UCP services
+- `GET /api/discovery/clear-cache` - Clear the discovery cache
+- `GET /v3/api-docs` - OpenAPI specification (springdoc)
 
 ### Personal Agent Authorization (Poppy)
 
@@ -102,34 +106,50 @@ Any other email is denied. The token is kept in memory for the page session, so 
 
 Missing or unknown token → `401 invalid_token`. Token without the required scope → `403 insufficient_scope`. Catalog, cart and discovery endpoints stay public.
 
-### Products
+### Catalog
 
-- `GET /ucp/products` - List all products
-- `GET /ucp/products/{productId}` - Get product details
-- `GET /ucp/products/category/{category}` - Get products by category
+- `GET /ucp/catalog/search` - Search products. Optional query parameters: `q`, `category`, `min_price`, `max_price`, `limit` (default 20), `offset`, `sort_by` (`relevance`, `price`, `title`), `sort_order` (`asc`, `desc`). With no parameters it lists every product
+- `GET /ucp/catalog/lookup?id={productId}` - Get one product with its options and variants
+
+### Carts
+
+- `POST /carts` - Create a cart from `line_items`
+- `PUT /carts/{cartId}` - Replace the cart's line items
+- `POST /carts/{cartId}/cancel` - Cancel a cart
 
 ### Checkout
 
-- `POST /ucp/checkout` - Process checkout
+🔒 Poppy-protected: `GET` requires `poppy:read`, everything else requires `poppy:write`.
 
-Example request:
+UCP checkout is a two-step session flow:
+
+- `POST /checkout-sessions` - Create a checkout session
+- `GET /checkout-sessions/{id}` - Get session status
+- `PUT /checkout-sessions/{id}` - Update the session (buyer, addresses, line items)
+- `POST /checkout-sessions/{id}/complete` - Complete with payment and fulfillment; the response includes the created `order`
+- `POST /checkout-sessions/{id}/cancel` - Cancel the session
+
+Example create request:
 ```json
 {
-  "customerId": "customer-123",
-  "paymentMethod": "credit_card",
-  "shippingMethod": "standard",
-  "items": [
-    {
-      "productId": "prod-001",
-      "quantity": 1
-    },
-    {
-      "productId": "prod-003",
-      "quantity": 2
-    }
-  ]
+  "line_items": [
+    { "item": { "id": "prod-001" }, "quantity": 1 },
+    { "item": { "id": "prod-003" }, "quantity": 2 }
+  ],
+  "buyer": {
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email": "jane@example.com"
+  },
+  "context": {
+    "currency": "USD",
+    "language": "en",
+    "address_country": "US"
+  }
 }
 ```
+
+The complete request carries `buyer`, `payment.instruments` and `fulfillment.methods`. See `checkoutViaREST()` in `src/main/resources/static/js/chat.js` for a full example.
 
 ### Orders
 
@@ -145,6 +165,22 @@ Example request:
 - `GET /ucp/payments/{paymentId}` - Get payment details
 - `GET /ucp/payments/order/{orderId}` - Get payment by order
 - `POST /ucp/payments/{paymentId}/refund` - Refund a payment
+
+### A2A (Agent-to-Agent)
+
+- `POST /a2a/message` - Send an A2A message (synchronous HTTP)
+- `WS /a2a/ws` - STOMP WebSocket endpoint. Send to `/app/a2a/message`, receive on `/topic/a2a/responses`
+- `GET /a2a/capabilities` - List supported A2A operations
+- `GET /a2a/health` - A2A health check
+
+### Schema Validation (admin)
+
+Available when `ucp.validation.management.enabled: true`:
+
+- `GET /admin/schema-validation/stats` - Schema cache statistics
+- `POST /admin/schema-validation/clear-cache` - Clear the schema cache
+- `POST /admin/schema-validation/validate/{capabilityName}` - Validate a JSON body against a capability schema
+- `POST /admin/schema-validation/load-resource` - Load a schema from a classpath resource
 
 ## Sample Products
 
@@ -166,24 +202,11 @@ The application initializes with 6 Adidas products:
 
 2. **Browse products**:
    ```bash
-   curl http://localhost:8080/ucp/products
+   curl 'http://localhost:8080/ucp/catalog/search?q=shoes'
+   curl 'http://localhost:8080/ucp/catalog/lookup?id=prod-001'
    ```
 
-3. **Checkout**:
-   ```bash
-   curl -X POST http://localhost:8080/ucp/checkout \
-     -H "Content-Type: application/json" \
-     -d '{
-       "customerId": "customer-123",
-       "paymentMethod": "credit_card",
-       "shippingMethod": "standard",
-       "items": [
-         {"productId": "prod-001", "quantity": 1}
-       ]
-     }'
-   ```
-
-4. **Authorize as a personal agent (Poppy)**:
+3. **Authorize as a personal agent (Poppy)**. Checkout and orders require a token:
    ```bash
    # Discover the OAuth endpoints and scopes
    curl http://localhost:8080/.well-known/poppy.json
@@ -195,6 +218,26 @@ The application initializes with 6 Adidas products:
    curl -X POST http://localhost:8080/auth/token \
      -d grant_type=authorization_code -d code={code}
    ```
+
+4. **Checkout** (requires `poppy:write`):
+   ```bash
+   # Create the checkout session; note the returned "id"
+   curl -X POST http://localhost:8080/checkout-sessions \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer {access_token}" \
+     -d '{
+       "line_items": [{ "item": { "id": "prod-001" }, "quantity": 1 }],
+       "buyer": { "first_name": "Jane", "last_name": "Doe", "email": "jane@example.com" },
+       "context": { "currency": "USD", "language": "en", "address_country": "US" }
+     }'
+
+   # Complete it with payment and fulfillment (full body: checkoutViaREST() in chat.js)
+   curl -X POST http://localhost:8080/checkout-sessions/{sessionId}/complete \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer {access_token}" \
+     -d '{ "buyer": { ... }, "payment": { "instruments": [ ... ] }, "fulfillment": { "methods": [ ... ] } }'
+   ```
+   The response's `order.id` is the order ID.
 
 5. **Check order** (requires a token with `poppy:read`):
    ```bash
@@ -215,12 +258,15 @@ src/main/
 │   │   ├── WebMvcConfig.java              # Registers the Poppy interceptor on protected paths
 │   │   └── PoppySecurityInterceptor.java  # Bearer token + scope check (401/403)
 │   ├── controller/          # REST controllers
-│   │   ├── AgentCardController.java
-│   │   ├── UcpProfileController.java
-│   │   ├── ProductController.java
-│   │   ├── CheckoutController.java
-│   │   ├── OrderController.java
-│   │   ├── PaymentController.java
+│   │   ├── AgentCardController.java           # GET /.well-known/agent.json
+│   │   ├── UcpProfileController.java          # GET /ucp/profile
+│   │   ├── CatalogSearchController.java       # /ucp/catalog/search, /ucp/catalog/lookup
+│   │   ├── CartController.java                # /carts
+│   │   ├── UcpCheckoutSessionController.java  # /checkout-sessions
+│   │   ├── OrderController.java               # /ucp/orders
+│   │   ├── PaymentController.java             # /ucp/payments
+│   │   ├── A2aController.java                 # /a2a/message, /a2a/capabilities, /a2a/health
+│   │   ├── A2aWebSocketController.java        # STOMP /app/a2a/message
 │   │   ├── PoppyDiscoveryController.java  # GET /.well-known/poppy.json
 │   │   └── MockAuthController.java        # Mock OAuth: /auth/authorize, /auth/token
 │   ├── service/            # Business logic
@@ -236,7 +282,7 @@ src/main/
 │   ├── dto/                # Data transfer objects
 │   │   ├── CheckoutRequest.java
 │   │   └── CheckoutResponse.java
-│   └── UcpPocApplication.java
+│   └── UcpDemoApplication.java
 └── resources/
     ├── static/             # Web UI
     │   ├── .well-known/poppy.json   # Poppy manifest
