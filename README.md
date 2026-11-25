@@ -16,6 +16,7 @@ This POC implements a mock e-commerce store with UCP protocol support, enabling 
 - **Payment Processing**: Mock payment with multiple methods (VISA, AMEX, MASTERCARD)
   - VISA and AMEX: Always succeed
   - MASTERCARD: Always fails (for testing error scenarios)
+- **Personal Agent Protocol (Poppy)**: Personal agents discover the store via `/.well-known/poppy.json` and get user-delegated, scope-limited access (`poppy:read` / `poppy:write`) through a mock OAuth 2.0 flow before calling checkout, order and payment endpoints. See [POPPY.md](POPPY.md)
 
 ## Architecture
 
@@ -23,6 +24,7 @@ This POC implements a mock e-commerce store with UCP protocol support, enabling 
 - **UCP Spring Boot Starter** for protocol support
 - **In-memory storage** for POC simplicity (concurrent hash maps)
 - **REST API** following UCP conventions
+- **Poppy authorization layer**: mock OAuth server (`/auth/*`) plus a Spring MVC interceptor that checks Bearer tokens and scopes on protected paths
 
 ## Getting Started
 
@@ -66,6 +68,17 @@ Try these commands in the chat:
 - "Checkout"
 - Type an order ID (e.g., "order-abc123") to check status
 
+#### Agent authorization (Poppy)
+
+Browsing and cart operations work anonymously (Guest mode). When you **checkout** or **look up an order**, the assistant opens an **Authorize Personal Agent** dialog and asks for your store account email:
+
+| Demo account | Scopes granted | Look up orders | Checkout |
+|--------------|----------------|:--------------:|:--------:|
+| `reader@example.com` | `poppy:read` | ✅ | ❌ (403 `insufficient_scope`) |
+| `buyer@example.com` | `poppy:read poppy:write` | ✅ | ✅ |
+
+Any other email is denied. The token is kept in memory for the page session, so reloading the page asks again. If an action needs a scope the current token lacks, the dialog reopens so you can switch accounts.
+
 ## API Endpoints
 
 ### Discovery
@@ -74,6 +87,20 @@ Try these commands in the chat:
 - `GET /.well-known/agent.json` - Agent card for capability discovery
 - `GET /ucp/profile` - UCP protocol configuration
 - `GET /api/protocol/info` - Current protocol mode (REST)
+- `GET /.well-known/poppy.json` - Personal Agent Protocol (Poppy) manifest: OAuth endpoints, scopes and channels
+
+### Personal Agent Authorization (Poppy)
+
+- `GET /auth/authorize` - Mock authorization endpoint. Takes `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state` and `login_hint` (account email), and redirects back with a single-use `code` or `error=access_denied`
+- `POST /auth/token` - Exchanges the code (`grant_type=authorization_code`) for a Bearer token. The response includes the granted `scope` and `email`
+
+**Protected endpoints** need `Authorization: Bearer <token>`:
+
+| Paths | `GET` requires | Other methods require |
+|-------|----------------|-----------------------|
+| `/checkout-sessions/**`, `/ucp/orders/**`, `/ucp/payments/**` | `poppy:read` | `poppy:write` |
+
+Missing or unknown token → `401 invalid_token`. Token without the required scope → `403 insufficient_scope`. Catalog, cart and discovery endpoints stay public.
 
 ### Products
 
@@ -106,10 +133,14 @@ Example request:
 
 ### Orders
 
+🔒 Poppy-protected: requires `poppy:read`.
+
 - `GET /ucp/orders/{orderId}` - Get order details
 - `GET /ucp/orders/customer/{customerId}` - Get customer orders
 
 ### Payments
+
+🔒 Poppy-protected: `GET` requires `poppy:read`, refund requires `poppy:write`.
 
 - `GET /ucp/payments/{paymentId}` - Get payment details
 - `GET /ucp/payments/order/{orderId}` - Get payment by order
@@ -152,10 +183,26 @@ The application initializes with 6 Adidas products:
      }'
    ```
 
-4. **Check order**:
+4. **Authorize as a personal agent (Poppy)**:
    ```bash
-   curl http://localhost:8080/ucp/orders/{orderId}
+   # Discover the OAuth endpoints and scopes
+   curl http://localhost:8080/.well-known/poppy.json
+
+   # Sign in as the demo buyer; the redirect Location header carries the code
+   curl -i 'http://localhost:8080/auth/authorize?response_type=code&client_id=personal-agent-frontend&redirect_uri=http://localhost:8080&scope=poppy:read%20poppy:write&login_hint=buyer@example.com'
+
+   # Exchange the code for a Bearer token
+   curl -X POST http://localhost:8080/auth/token \
+     -d grant_type=authorization_code -d code={code}
    ```
+
+5. **Check order** (requires a token with `poppy:read`):
+   ```bash
+   curl http://localhost:8080/ucp/orders/{orderId} \
+     -H "Authorization: Bearer {access_token}"
+   ```
+
+See [POPPY.md](POPPY.md) for the full flow, including the read-only `reader@example.com` example and the `401`/`403` responses.
 
 ## Development
 
@@ -164,17 +211,23 @@ The application initializes with 6 Adidas products:
 ```
 src/main/
 ├── java/com/ucp/poc/
+│   ├── config/             # Web configuration
+│   │   ├── WebMvcConfig.java              # Registers the Poppy interceptor on protected paths
+│   │   └── PoppySecurityInterceptor.java  # Bearer token + scope check (401/403)
 │   ├── controller/          # REST controllers
 │   │   ├── AgentCardController.java
 │   │   ├── UcpProfileController.java
 │   │   ├── ProductController.java
 │   │   ├── CheckoutController.java
 │   │   ├── OrderController.java
-│   │   └── PaymentController.java
+│   │   ├── PaymentController.java
+│   │   ├── PoppyDiscoveryController.java  # GET /.well-known/poppy.json
+│   │   └── MockAuthController.java        # Mock OAuth: /auth/authorize, /auth/token
 │   ├── service/            # Business logic
 │   │   ├── ProductService.java
 │   │   ├── OrderService.java
-│   │   └── PaymentService.java
+│   │   ├── PaymentService.java
+│   │   └── PoppyTokenStore.java           # Demo accounts, codes and tokens (in memory)
 │   ├── model/              # Domain models
 │   │   ├── Product.java
 │   │   ├── Order.java
@@ -186,9 +239,10 @@ src/main/
 │   └── UcpPocApplication.java
 └── resources/
     ├── static/             # Web UI
-    │   ├── index.html
+    │   ├── .well-known/poppy.json   # Poppy manifest
+    │   ├── index.html               # Includes the Poppy consent dialog
     │   ├── css/chat.css
-    │   └── js/chat.js
+    │   └── js/chat.js               # Poppy discovery, consent and token handling
     └── application.yml
 ```
 
@@ -206,6 +260,10 @@ Configuration is in `src/main/resources/application.yml`:
 - **Official UCP Website**: https://ucp.dev
 - **UCP Specification**: https://ucp.dev/latest/specification/
 - **UCP GitHub**: https://github.com/Universal-Commerce-Protocol/ucp
+
+### Personal Agent Protocol (Poppy)
+- **Integration guide and examples**: [POPPY.md](POPPY.md)
+- **Note**: the OAuth server is a mock (no passwords, opaque in-memory tokens). See the limitations section in POPPY.md before reusing this pattern
 
 ### Additional Resources
 - [Google Merchant UCP Docs](https://developers.google.com/merchant/ucp)

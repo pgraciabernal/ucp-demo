@@ -4,6 +4,8 @@
 
 UCP POC is a Spring Boot 3.2 application demonstrating the Unified Commerce Protocol (UCP) for AI-enabled commerce operations. It implements a mock e-commerce store with full UCP protocol support, enabling AI agents to discover and interact with commerce capabilities.
 
+It also implements the **Personal Agent Protocol (Poppy)**. A personal agent acting for an end user discovers the store through a manifest, obtains a user-delegated OAuth 2.0 token with limited scopes, and presents it to call protected commerce operations (see [Component 11](#11-personal-agent-authorization-poppy) and [POPPY.md](POPPY.md)).
+
 ## Tech Stack
 
 ### Core Framework
@@ -108,12 +110,14 @@ ucp:
 - `UcpProfileController`: Exposes `/ucp/profile` (multi-protocol aware)
 - `DiscoveryStatusController`: Status endpoint for health checks
 - `DiscoveryHelperController`: Helper endpoints for debugging
+- `PoppyDiscoveryController`: Exposes the Poppy manifest `/.well-known/poppy.json`
 
 **Key Endpoints**:
 - `GET /.well-known/ucp` - Primary UCP discovery endpoint (standard)
 - `GET /.well-known/agent.json` - Agent card for capability discovery (includes REST and A2A endpoints)
 - `GET /ucp/profile` - Detailed UCP protocol configuration (shows active protocols)
 - `GET /api/protocol/info` - Current protocol mode (REST, A2A, or BOTH)
+- `GET /.well-known/poppy.json` - Poppy manifest: organization, OAuth endpoints, scopes, and channels (OpenAPI at `/v3/api-docs`, company agent at `/api/protocol/info`)
 
 **Network Discovery**:
 - mDNS/Bonjour service registration for local network discovery
@@ -230,7 +234,7 @@ ucp:
 - Customer order history
 - Detailed order line items
 
-**Key Endpoints**:
+**Key Endpoints** (🔒 Poppy `poppy:read` required):
 - `GET /ucp/orders/{orderId}` - Order details
 - `GET /ucp/orders/customer/{customerId}` - Customer orders
 
@@ -250,7 +254,7 @@ ucp:
 - Refund processing (mock)
 - Payment-to-order linking
 
-**Key Endpoints**:
+**Key Endpoints** (🔒 Poppy: `GET` requires `poppy:read`, refund requires `poppy:write`):
 - `GET /ucp/payments/{paymentId}` - Payment details
 - `GET /ucp/payments/order/{orderId}` - Get payment by order
 - `POST /ucp/payments/{paymentId}/refund` - Process refund
@@ -292,6 +296,7 @@ ucp:
 - `ProtocolConfiguration`: Protocol mode and feature flags
 - `ProtocolCondition`: Conditional bean loading
 - `UcpWebConfig`: Web MVC interceptor registration
+- `WebMvcConfig`: Registers `PoppySecurityInterceptor` on `/checkout-sessions/**`, `/ucp/orders/**`, `/ucp/payments/**`
 
 **Configuration**:
 ```yaml
@@ -363,13 +368,60 @@ ucp:
 - Checkout flow with address and payment forms
 - Order status tracking
 - Responsive design
+- Poppy consent dialog (`#poppy-oauth-modal`) with account email field
 
 **User Commands**:
 - "Show me [category]" - Browse by category
 - "Show me all products" - View entire catalog
 - "Show my cart" - View cart contents
-- "Checkout" - Start checkout flow
-- "[order-id]" - Track order status
+- "Checkout" - Start checkout flow (requires `poppy:write` authorization)
+- "[order-id]" - Track order status (requires `poppy:read` authorization)
+
+**Poppy client** (`chat.js`): `discoverPoppyCapabilities()` reads the manifest on page load. `ensurePoppyAccessToken(scope)` opens the consent dialog when the current token lacks the required scope. `initiateOAuthLoginFlow()` runs the authorize/token exchange, and `poppyAuthHeaders()` adds the Bearer header to protected calls. The token and granted scopes are kept in memory (`poppyConfig`) for the page session.
+
+### 11. Personal Agent Authorization (Poppy)
+**Purpose**: Let a personal agent act on behalf of a user with explicit, scope-limited consent
+
+**Components**:
+- `PoppyDiscoveryController`: Serves the manifest `static/.well-known/poppy.json`
+- `MockAuthController`: Mock OAuth 2.0 authorization server (authorization code grant)
+- `PoppyTokenStore`: In-memory demo accounts, single-use authorization codes and access tokens with their granted scopes
+- `PoppySecurityInterceptor`: Spring MVC `HandlerInterceptor` that validates the Bearer token and the required scope
+- `WebMvcConfig`: Registers the interceptor on protected paths
+
+**Scopes**:
+| Scope | Required for |
+|-------|--------------|
+| `poppy:read` | `GET` on protected paths (orders, payments, checkout session status) |
+| `poppy:write` | Any other method on protected paths (create/complete checkout, refunds) |
+
+**Demo Accounts** (`PoppyTokenStore.DEMO_USERS`):
+| Email | Allowed scopes |
+|-------|----------------|
+| `reader@example.com` | `poppy:read` |
+| `buyer@example.com` | `poppy:read`, `poppy:write` |
+
+The account is identified by the OIDC `login_hint` parameter on `/auth/authorize`. Granted scopes are the requested scopes **intersected** with the account's allowed scopes. Unknown accounts are redirected back with `error=access_denied`.
+
+**Key Endpoints**:
+- `GET /.well-known/poppy.json` - Manifest (public)
+- `GET /auth/authorize` - Issues a single-use code via redirect to `redirect_uri`
+- `POST /auth/token` - Exchanges the code for a Bearer token (`scope` and `email` included in the response)
+
+**Enforcement**:
+- `OPTIONS` (CORS preflight) always passes
+- Missing, malformed or unknown token → `401 invalid_token` + `WWW-Authenticate: Bearer error="invalid_token"`
+- Valid token without the required scope → `403 insufficient_scope` + `WWW-Authenticate: Bearer error="insufficient_scope", scope="..."`
+- Catalog (`/ucp/catalog/**`), carts (`/carts/**`) and discovery endpoints remain public (Guest mode)
+
+**Design Notes**:
+- Authorization lives in a `HandlerInterceptor`, not in controllers, so UCP controllers stay unaware of Poppy
+- The store, not the client, is the authority on scopes: the UI still sends the request and surfaces the server's `403` message
+- Required scope is derived from the HTTP method (coarse-grained by design for the POC)
+
+**Limitations**:
+- Mock server: no passwords, opaque tokens, no expiry enforcement, refresh token unused, state lost on restart
+- The A2A channel (`/a2a/*`) and its internal `RestTemplate` routing do not propagate user tokens and are not covered by Poppy
 
 ## Data Flow
 
@@ -407,11 +459,38 @@ User → UI Chat Client → ProductController → ProductService → In-Memory S
                                Return Confirmation
 ```
 
+Steps 2–4 go through `PoppySecurityInterceptor` first: the UI must hold a token with `poppy:write` (see the Poppy Authorization Flow below).
+
 ### Order Tracking Flow
 ```
-User → UI Chat Client → OrderController → OrderService → In-Memory Storage
-                                        ↓
-                                  Order Details
+User → UI Chat Client → PoppySecurityInterceptor (poppy:read) → OrderController → OrderService → In-Memory Storage
+                                                                ↓
+                                                          Order Details
+```
+
+### Poppy Authorization Flow
+```
+1. Discovery (page load, Guest mode):
+   UI → GET /.well-known/poppy.json → PoppyDiscoveryController
+                                     ↓
+                     authorization_endpoint, token_endpoint, scopes
+
+2. Consent (first protected action):
+   UI consent dialog (email) → GET /auth/authorize?login_hint=<email>&scope=poppy:read poppy:write
+                                     ↓
+                    MockAuthController → PoppyTokenStore (allowed scopes for email)
+                                     ↓
+                    302 redirect_uri?code=...   |   302 redirect_uri?error=access_denied
+
+3. Token exchange:
+   UI → POST /auth/token (code) → PoppyTokenStore (redeem code, issue token)
+                                     ↓
+                    { access_token, scope, email }
+
+4. Protected call:
+   UI → Authorization: Bearer <token> → PoppySecurityInterceptor
+                                     ↓
+           unknown token → 401   |   missing scope → 403   |   OK → Controller
 ```
 
 ## Storage Strategy
@@ -453,13 +532,17 @@ All data stored in concurrent hash maps for thread-safety:
 ## Security Considerations
 
 ### Current State (POC)
-- No authentication/authorization (intentionally for demo)
+- **Poppy authorization** on checkout sessions, orders and payments: Bearer tokens with `poppy:read`/`poppy:write` scopes, issued by a **mock** OAuth server (no passwords, opaque in-memory tokens). See [Component 11](#11-personal-agent-authorization-poppy)
+- Catalog, cart, discovery and A2A endpoints have no authentication (intentionally for demo)
 - No HTTPS/TLS (local development only)
 - No rate limiting
 - No input sanitization beyond validation
 
 ### Production Recommendations
-- Implement OAuth2/JWT authentication
+- Replace `MockAuthController`/`PoppyTokenStore` with a real authorization server (Spring Authorization Server, Keycloak, Auth0) issuing signed JWTs with a `scope` claim
+- Replace `PoppySecurityInterceptor` with Spring Security resource-server validation and per-endpoint scope rules (e.g. `hasAuthority('SCOPE_poppy:write')`)
+- Use PKCE and real browser redirects for browser-based personal agents
+- Propagate the user's token through A2A routing so both protocols share the Poppy authorization model
 - Add HTTPS/TLS termination
 - Rate limiting per customer/session
 - Input sanitization and SQL injection prevention (if DB added)
@@ -503,6 +586,7 @@ src/test/java/com/ucp/poc/
 ```
 
 ### Testing Recommendations
+- Poppy tests (none yet): `MockAuthController` scope granting per account, single-use codes, and `PoppySecurityInterceptor` `401`/`403` responses via MockMvc
 - Integration tests for API endpoints
 - Contract tests for UCP compliance
 - End-to-end tests for complete flows
@@ -582,6 +666,7 @@ logging:
 
 ### Protocol Support
 - ✅ A2A (Agent-to-Agent) protocol - **IMPLEMENTED**
+- ✅ Personal Agent Protocol (Poppy) discovery and scoped authorization - **IMPLEMENTED** (mock OAuth server)
 - MCP (Model Context Protocol) integration
 - GraphQL API for flexible queries
 
@@ -600,7 +685,7 @@ logging:
 ### Technical Improvements
 - Database persistence layer
 - Distributed session management
-- Authentication and authorization (REST and A2A)
+- Production-grade authentication (REST is covered by mock Poppy authorization; A2A is not yet)
 - API rate limiting (per agent for A2A)
 - Webhook support for external integrations
 - Comprehensive API documentation (OpenAPI/Swagger)
@@ -610,8 +695,9 @@ logging:
 ## References
 
 ### Internal Documentation
-- [UI Guide](../../QUICK-START.md)
-- [Project README](../../README.md)
+- [UI Guide](QUICK-START.md)
+- [Project README](README.md)
+- [Personal Agent Protocol (Poppy) Integration](POPPY.md)
 
 ### External Resources
 - [UCP Official Website](https://ucp.dev)
